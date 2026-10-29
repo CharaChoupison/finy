@@ -255,6 +255,11 @@ svg { width: 24px; height: 24px; flex: none; fill: none; stroke: currentColor; s
 .presets { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-2); }
 .presets .chip { min-height: 44px; }
 
+.goal .row-main { gap: 6px; }
+.goal-bar { display: block; height: 6px; border-radius: var(--radius-full); background: var(--border); overflow: hidden; }
+.goal-bar span { display: block; height: 100%; min-width: 6px; border-radius: inherit; background: var(--accent); }
+.link-btn svg { width: 16px; height: 16px; stroke-width: 2; vertical-align: -3px; margin-right: 2px; }
+
 /* ---------- Listes ---------- */
 
 .group { border-radius: var(--radius-lg); background: var(--surface); padding: 0 var(--space-4); }
@@ -605,8 +610,9 @@ button.row:active, a.row:active { transform: scale(.985); }
 
   /* Épargne : réglage à gauche, calcul à droite */
   .view[data-route="epargne"] {
-    grid-template-areas: "top top" "hero side" "main side";
+    grid-template-areas: "top top" "hero side" "main side" "goals goals";
   }
+  .a-goals { grid-area: goals; }
 
   /* Réglages : une colonne de lecture */
   .view[data-route="reglages"] { display: flex; align-items: stretch; max-width: 720px; }
