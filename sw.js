@@ -1,5 +1,5 @@
 /* Finy — service worker : garde l'app disponible hors ligne. */
-var CACHE = 'finy-v7';
+var CACHE = 'finy-v8';
 var LOGOS = 'finy-logos';
 var SHELL = [
   './',
