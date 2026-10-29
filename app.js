@@ -279,8 +279,9 @@
   function totals() {
     var subs = state.subs.reduce(function (a, s) { return a + costThisMonth(s); }, 0);
     var cats = state.categories.reduce(function (a, c) { return a + c.amount; }, 0);
-    var rest = state.salary - state.savings - subs;
-    return { subs: subs, cats: cats, rest: rest, free: rest - cats, weekly: Math.max(0, rest) / WEEKS_PER_MONTH };
+    var goals = goalsMonthly();
+    var rest = state.salary - state.savings - goals - subs;
+    return { subs: subs, cats: cats, goals: goals, rest: rest, free: rest - cats, weekly: Math.max(0, rest) / WEEKS_PER_MONTH };
   }
 
   function yearlyCount() {
@@ -418,8 +419,10 @@
     if (state.salary > 0) {
       var parts = [
         { name: 'Épargne', value: state.savings, color: 'var(--accent)', href: '#/epargne' },
+        { name: 'Objectifs', value: t.goals, color: 'var(--chart-4)', href: '#/epargne', goals: true },
         { name: 'Abonnements', value: t.subs, color: 'var(--chart-2)', href: '#/abonnements' }
       ];
+      if (t.goals <= 0) parts.splice(1, 1);
       state.categories.forEach(function (c, i) {
         parts.push({ name: c.name, value: c.amount, color: CAT_PALETTE[i % CAT_PALETTE.length], id: c.id });
       });
@@ -430,7 +433,7 @@
         '<span class="label">Salaire ' + euro(state.salary) + '</span></div>' + splitBar(bar, aria) + '<div class="group">' +
         parts.map(function (p) {
           var inner = '<span class="dot" style="--c:' + p.color + '" aria-hidden="true"></span><span class="row-main"><span class="row-title">' + esc(p.name) + '</span></span><span class="row-amount">' + euro(p.value) + '</span>';
-          if (p.href === '#/epargne') return '<a class="row" href="' + p.href + '">' + inner + '</a>' + goalRows();
+          if (p.goals) return '<a class="row" href="' + p.href + '">' + inner + '</a>' + goalRows();
           return p.href
             ? '<a class="row" href="' + p.href + '">' + inner + '</a>'
             : '<button type="button" class="row" data-action="edit-cat" data-id="' + esc(p.id) + '">' + inner + '</button>';
@@ -438,8 +441,7 @@
         '<div class="row"><span class="dot" style="--c:var(--border)" aria-hidden="true"></span><span class="row-main"><span class="row-title strong">Libre</span></span>' +
         '<span class="row-amount"' + (t.free < 0 ? ' style="color:var(--danger)"' : '') + '>' + euro(t.free) + '</span></div>' +
         '<button type="button" class="row row-link" data-action="add-cat">' + icon('plus') + 'Ajouter une catégorie</button></div>' +
-        (t.rest < 0 ? '<p class="alert">Tes dépenses fixes dépassent ton salaire. Baisse ton épargne ou retire un abonnement.</p>' : '') +
-        (goalsMonthly() - state.savings > 0.005 ? '<p class="alert">Tes objectifs demandent ' + euro(goalsMonthly()) + ' par mois, plus que ton épargne. <a href="#/epargne" style="text-decoration:underline">Ajuster</a></p>' : '') +
+        (t.rest < 0 ? '<p class="alert">Tes dépenses fixes dépassent ton salaire. Baisse ton épargne, allonge un objectif ou retire un abonnement.</p>' : '') +
         '</section>';
     }
 
@@ -451,7 +453,7 @@
     return html;
   }
 
-  // Objectifs en cours, affichés comme une partie de l'épargne (ils n'entrent pas dans le calcul de Libre).
+  // Détail des objectifs en cours, sous la ligne « Objectifs ».
   function goalRows() {
     return state.goals.map(function (g) {
       var p = goalPlan(g);
@@ -627,7 +629,7 @@
     }
     html += '</section><section class="section a-goals" aria-label="Objectifs d\'épargne"><div class="section-head"><h2 class="heading">Objectifs</h2>' +
       '<button type="button" class="link-btn" data-action="add-goal">' + icon('plus') + 'Nouvel objectif</button></div><div id="sv-goals"></div></section>';
-    html += '<section class="section a-side"><h2 class="heading">Ce qu\'il te reste</h2><div class="group" id="sv-calc"></div><p class="alert" id="sv-alert" hidden>Avec ce montant, tes dépenses fixes dépassent ton salaire. Baisse un peu ton épargne.</p></section>';
+    html += '<section class="section a-side"><h2 class="heading">Ce qu\'il te reste</h2><div class="group" id="sv-calc"></div><p class="alert" id="sv-alert" hidden>Avec ce montant, tes dépenses fixes dépassent ton salaire. Baisse un peu ton épargne ou allonge un objectif.</p></section>';
     return html;
   }
 
@@ -650,6 +652,7 @@
     document.getElementById('sv-calc').innerHTML =
       calcRow('Salaire', euro(state.salary), 'var(--ink)') +
       calcRow('Épargne', '− ' + euro(state.savings), 'var(--accent)') +
+      (t.goals > 0 ? calcRow('Objectifs', '− ' + euro(t.goals), 'var(--chart-4)') : '') +
       calcRow(yearlyCount() ? (state.settings.annualMode === 'smooth' ? 'Abonnements (annuels lissés)' : 'Abonnements (ce mois-ci)') : 'Abonnements', '− ' + euro(t.subs), 'var(--chart-2)') +
       '<div class="row" style="min-height:60px"><span class="row-main"><span class="strong">Il te reste</span></span><span class="row-amount" style="font-size:20px;line-height:26px;font-weight:700' + (t.rest < 0 ? ';color:var(--danger)' : '') + '">' + euro(t.rest) + '</span></div>' +
       '<div class="row"><span class="row-main"><span class="muted">Pour te faire plaisir chaque semaine</span></span><span class="row-amount">' + euro(t.weekly) + '</span></div>';
@@ -676,11 +679,8 @@
         '<span class="row-amount">' + (p.missing > 0 ? euro(p.monthly) + '<small class="per">/mois</small>' : '✓') + '</span></button>';
     }).join('') + '</div>';
     if (need > 0) {
-      var gap = need - state.savings;
       html += '<p class="caption">' + (state.goals.length > 1 ? 'Tes objectifs demandent ' : 'Cet objectif demande ') + '<span class="strong" style="color:var(--ink)">' + euro(need) + ' par mois</span>' +
-        (gap > 0.005
-          ? ', soit ' + euro(gap) + ' de plus que ce que tu mets de côté. <button type="button" class="link-btn" data-action="sv-goals">Épargner ' + euro(need) + ' par mois</button>'
-          : ' : ton épargne de ' + euro(state.savings) + ' les couvre.') + '</p>';
+        ', en plus de ton épargne. Ce montant est retiré de ce qu\'il te reste.</p>';
     }
     el.innerHTML = html;
   }
@@ -1533,10 +1533,6 @@
         if (!window.confirm('Supprimer cet objectif ?')) return;
         state.goals = state.goals.filter(function (g) { return g.id !== id; });
         closeSheet(); save(); render(); toast('Objectif supprimé');
-        return;
-      case 'sv-goals':
-        state.savings = Math.round(goalsMonthly() * 100) / 100;
-        save(); fillSavings(); toast('Épargne mise à jour');
         return;
       case 'sheet-close': return closeSheet();
       case 'delete-sub':

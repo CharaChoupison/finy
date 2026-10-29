@@ -16,7 +16,7 @@ Web app pour savoir ce qu'il te reste chaque mois, après ton épargne et tes ab
 
 ## Objectifs d'épargne
 
-Dans **Épargne**, touche **Nouvel objectif** : un nom, le montant à atteindre, ce que tu as déjà de côté et une durée (en mois ou en ans). Finy calcule ce qu'il faut mettre de côté chaque mois, et le recalcule au fil des mois avec le temps qui reste. Pour avancer, ouvre l'objectif et mets à jour **Déjà de côté**. Si tes objectifs demandent plus que ton épargne mensuelle, un lien te propose d'ajuster ton épargne au bon montant.
+Dans **Épargne**, touche **Nouvel objectif** : un nom, le montant à atteindre, ce que tu as déjà de côté et une durée (en mois ou en ans). Finy calcule ce qu'il faut mettre de côté chaque mois, et le recalcule au fil des mois avec le temps qui reste. Pour avancer, ouvre l'objectif et mets à jour **Déjà de côté**. Les objectifs s'ajoutent à ton épargne mensuelle : leur montant est retiré de ce qu'il te reste, et ils ont leur propre ligne dans la répartition de l'accueil.
 
 ## Importer un relevé ou une facture
 
