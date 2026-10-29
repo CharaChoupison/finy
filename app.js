@@ -73,6 +73,8 @@
         name: s.name.slice(0, 60),
         amount: Math.max(0, s.amount),
         day: Math.min(31, Math.max(1, Math.round(num(s.day, 1)))),
+        frequency: s.frequency === 'year' ? 'year' : 'month',
+        month: Math.min(11, Math.max(0, Math.round(num(s.month, new Date().getMonth())))),
         category: typeof s.category === 'string' && s.category ? s.category.slice(0, 30) : 'Autre',
         site: typeof s.site === 'string' ? (normalizeSite(s.site) || '') : '',
         image: isImageData(s.image) ? s.image : null
@@ -179,9 +181,25 @@
 
   function diffDays(a, b) { return Math.round((a - b) / 86400000); }
 
-  function nextDate(day, from) {
-    var d = onDay(from.getFullYear(), from.getMonth(), day);
-    return d < from ? onDay(from.getFullYear(), from.getMonth() + 1, day) : d;
+  // Prochain prélèvement d'un abonnement à partir d'une date (mensuel ou annuel).
+  function nextDate(s, from) {
+    var y = from.getFullYear();
+    if (s.frequency === 'year') {
+      var a = onDay(y, s.month, s.day);
+      return a < from ? onDay(y + 1, s.month, s.day) : a;
+    }
+    var d = onDay(y, from.getMonth(), s.day);
+    return d < from ? onDay(y, from.getMonth() + 1, s.day) : d;
+  }
+
+  // L'abonnement est-il prélevé pendant ce mois ?
+  function chargedIn(s, m) { return s.frequency !== 'year' || s.month === m; }
+
+  // Coût ramené au mois : un abonnement annuel compte pour 1/12 chaque mois.
+  function monthlyCost(s) { return s.frequency === 'year' ? s.amount / 12 : s.amount; }
+
+  function priceLabel(s) {
+    return euro(s.amount) + (s.frequency === 'year' ? '<small class="per">/an</small>' : '');
   }
 
   function iso(d) {
@@ -198,16 +216,20 @@
   // ---------- Calculs ----------
 
   function totals() {
-    var subs = state.subs.reduce(function (a, s) { return a + s.amount; }, 0);
+    var subs = state.subs.reduce(function (a, s) { return a + monthlyCost(s); }, 0);
     var cats = state.categories.reduce(function (a, c) { return a + c.amount; }, 0);
     var rest = state.salary - state.savings - subs;
     return { subs: subs, cats: cats, rest: rest, free: rest - cats, weekly: Math.max(0, rest) / WEEKS_PER_MONTH };
   }
 
+  function yearlyCount() {
+    return state.subs.filter(function (s) { return s.frequency === 'year'; }).length;
+  }
+
   function upcoming() {
     var t = today();
     return state.subs.map(function (s) {
-      var d = nextDate(s.day, t);
+      var d = nextDate(s, t);
       return { sub: s, date: d, diff: diffDays(d, t) };
     }).sort(function (a, b) { return a.diff - b.diff || a.sub.name.localeCompare(b.sub.name); });
   }
@@ -223,11 +245,12 @@
 
   function subRow(u, showCategory) {
     var s = u.sub;
-    var extra = (showCategory ? esc(s.category) + ' · ' : '') + shortDate.format(u.date);
+    var extra = (showCategory ? esc(s.category) + ' · ' : '') + shortDate.format(u.date) +
+      (s.frequency === 'year' ? ' · ≈ ' + euro(s.amount / 12) + '/mois' : '');
     return '<button type="button" class="row tall" data-action="edit-sub" data-id="' + esc(s.id) + '">' +
       subTile(s) +
       '<span class="row-main"><span class="row-title">' + esc(s.name) + '</span>' + metaLine(u.diff, extra) + '</span>' +
-      '<span class="row-amount">' + euro(s.amount) + '</span></button>';
+      '<span class="row-amount">' + priceLabel(s) + '</span></button>';
   }
 
   // Priorité : image choisie, puis logo du site, puis initiale.
@@ -325,7 +348,8 @@
       '<button type="button" class="btn btn-primary" data-action="add-sub">' + icon('plus') + 'Ajouter</button></header>';
 
     html += '<section class="hero a-hero" aria-label="Total"><p class="amount-big">' + euro(t.subs) + '<small>/mois</small></p>' +
-      '<p class="label" style="font-weight:400">' + euro(t.subs * 12) + ' sur un an · ' + state.subs.length + ' abonnement' + (state.subs.length > 1 ? 's' : '') + '</p></section>';
+      '<p class="label" style="font-weight:400">' + euro(t.subs * 12) + ' sur un an · ' + state.subs.length + ' abonnement' + (state.subs.length > 1 ? 's' : '') +
+      (yearlyCount() ? ', dont ' + yearlyCount() + ' annuel' + (yearlyCount() > 1 ? 's' : '') + ' compté' + (yearlyCount() > 1 ? 's' : '') + ' au mois' : '') + '</p></section>';
 
     if (!state.subs.length) {
       return html + '<div class="group a-main"><div class="empty"><span>Aucun abonnement pour l\'instant.</span><span class="caption">Ajoute tes paiements récurrents pour voir où part ton argent.</span></div></div>';
@@ -343,7 +367,7 @@
       }).join('') + '</div></div>';
 
     var byCat = {};
-    state.subs.forEach(function (s) { byCat[s.category] = (byCat[s.category] || 0) + s.amount; });
+    state.subs.forEach(function (s) { byCat[s.category] = (byCat[s.category] || 0) + monthlyCost(s); });
     var cats = Object.keys(byCat).map(function (k) { return { name: k, value: byCat[k] }; }).sort(function (a, b) { return b.value - a.value; });
     var shown = cats.slice(0, 4).map(function (c, i) { return { name: c.name, value: c.value, color: SUB_PALETTE[i] }; });
     if (cats.length > 4) {
@@ -383,14 +407,15 @@
     if (ui.calSel === null && ui.calOffset === 0) ui.calSel = t.getDate();
 
     var byDay = {};
-    state.subs.forEach(function (s) {
+    var inMonth = state.subs.filter(function (s) { return chargedIn(s, m); });
+    inMonth.forEach(function (s) {
       var d = Math.min(s.day, n);
       (byDay[d] = byDay[d] || []).push(s);
     });
-    var monthTotal = state.subs.reduce(function (a, s) { return a + s.amount; }, 0);
-    var left = state.subs.filter(function (s) { return onDay(y, m, s.day) >= t; }).reduce(function (a, s) { return a + s.amount; }, 0);
-    var summary = state.subs.length
-      ? state.subs.length + ' prélèvement' + (state.subs.length > 1 ? 's' : '') + ' · ' + euro(monthTotal) + (left < monthTotal && left > 0 ? ' · reste ' + euro(left) : left === 0 && onDay(y, m, 1) <= t ? ' · tout est prélevé' : '')
+    var monthTotal = inMonth.reduce(function (a, s) { return a + s.amount; }, 0);
+    var left = inMonth.filter(function (s) { return onDay(y, m, s.day) >= t; }).reduce(function (a, s) { return a + s.amount; }, 0);
+    var summary = inMonth.length
+      ? inMonth.length + ' prélèvement' + (inMonth.length > 1 ? 's' : '') + ' · ' + euro(monthTotal) + (left < monthTotal && left > 0 ? ' · reste ' + euro(left) : left === 0 && onDay(y, m, 1) <= t ? ' · tout est prélevé' : '')
       : 'Aucun prélèvement';
 
     var html = '<header class="topbar a-top"><h1 class="title">Calendrier</h1><button type="button" class="btn" data-action="cal-today">Aujourd\'hui</button></header>';
@@ -428,7 +453,7 @@
         var soon = d >= 0 && d <= state.settings.alertDays;
         return '<button type="button" class="row tall" data-action="edit-sub" data-id="' + esc(s.id) + '">' + subTile(s) +
           '<span class="row-main"><span class="row-title">' + esc(s.name) + '</span><span class="row-meta"><span class="' + (soon ? 'soon' : '') + '">' + relative(d) + '</span></span></span>' +
-          '<span class="row-amount">' + euro(s.amount) + '</span></button>';
+          '<span class="row-amount">' + priceLabel(s) + '</span></button>';
       }).join('');
     } else {
       var nx = upcoming()[0];
@@ -476,7 +501,7 @@
     document.getElementById('sv-calc').innerHTML =
       calcRow('Salaire', euro(state.salary), 'var(--ink)') +
       calcRow('Épargne', '− ' + euro(state.savings), 'var(--accent)') +
-      calcRow('Abonnements', '− ' + euro(t.subs), 'var(--chart-2)') +
+      calcRow(yearlyCount() ? 'Abonnements (annuels au mois)' : 'Abonnements', '− ' + euro(t.subs), 'var(--chart-2)') +
       '<div class="row" style="min-height:60px"><span class="row-main"><span class="strong">Il te reste</span></span><span class="row-amount" style="font-size:20px;line-height:26px;font-weight:700' + (t.rest < 0 ? ';color:var(--danger)' : '') + '">' + euro(t.rest) + '</span></div>' +
       '<div class="row"><span class="row-main"><span class="muted">Pour te faire plaisir chaque semaine</span></span><span class="row-amount">' + euro(t.weekly) + '</span></div>';
     document.getElementById('sv-alert').hidden = !(state.salary > 0 && t.rest < 0);
@@ -659,7 +684,12 @@
   function editSub(id) {
     var s = state.subs.filter(function (x) { return x.id === id; })[0];
     var isNew = !s;
-    s = s || { name: '', amount: 0, day: today().getDate(), category: 'Streaming', site: '', image: null };
+    s = s || { name: '', amount: 0, day: today().getDate(), month: today().getMonth(), frequency: 'month', category: 'Streaming', site: '', image: null };
+    var yearly = s.frequency === 'year';
+    var months = '';
+    for (var mo = 0; mo < 12; mo++) {
+      months += '<option value="' + mo + '"' + (mo === s.month ? ' selected' : '') + '>' + cap(new Intl.DateTimeFormat('fr-FR', { month: 'long' }).format(new Date(2026, mo, 1))) + '</option>';
+    }
     sheetDraft = { name: s.name, site: s.site || '', image: s.image || null };
     var cats = SUB_CATEGORIES.slice();
     if (cats.indexOf(s.category) < 0) cats.push(s.category);
@@ -669,8 +699,12 @@
       '<div class="image-pick-actions"><label class="link-btn" style="display:inline-flex;align-items:center;cursor:pointer">Choisir une image<input type="file" accept="image/*" class="sr-only" data-input="sub-image"></label>' +
       '<button type="button" class="link-btn" data-action="sub-image-remove" style="color:var(--muted)"' + (s.image ? '' : ' hidden') + '>Retirer l\'image</button></div></div>' +
       '<label class="field"><span>Nom</span><input class="input" name="name" type="text" maxlength="60" autocomplete="off" placeholder="Netflix, Orange…" value="' + esc(s.name) + '" data-input="sub-name"></label>' +
-      '<div class="field-row">' + amountField('amount', 'Montant par mois (€)', s.amount) +
-      '<label class="field"><span>Jour du prélèvement</span><select class="input" name="day">' + days + '</select></label></div>' +
+      '<div class="field"><span>Fréquence</span><div class="segmented" role="radiogroup" aria-label="Fréquence">' +
+      '<label class="seg-opt"><input type="radio" name="frequency" value="month" data-input="sub-freq"' + (yearly ? '' : ' checked') + '><span>Mensuel</span></label>' +
+      '<label class="seg-opt"><input type="radio" name="frequency" value="year" data-input="sub-freq"' + (yearly ? ' checked' : '') + '><span>Annuel</span></label></div></div>' +
+      '<label class="field"><span id="amount-label">' + (yearly ? 'Montant par an (€)' : 'Montant par mois (€)') + '</span><input class="input" name="amount" type="text" inputmode="decimal" autocomplete="off" placeholder="0,00" value="' + (s.amount ? plain(s.amount) : '') + '"></label>' +
+      '<div class="field-row"><label class="field"><span>Jour du prélèvement</span><select class="input" name="day">' + days + '</select></label>' +
+      '<label class="field" id="month-field"' + (yearly ? '' : ' hidden') + '><span>Mois</span><select class="input" name="month">' + months + '</select></label></div>' +
       '<label class="field"><span>Catégorie</span><select class="input" name="category">' + cats.map(function (c) {
         return '<option' + (c === s.category ? ' selected' : '') + '>' + esc(c) + '</option>';
       }).join('') + '</select></label>' +
@@ -687,7 +721,14 @@
         site = normalizeSite(data.site);
         if (!site) return 'Indique un site comme netflix.com, ou laisse le champ vide.';
       }
-      var item = { id: isNew ? uid() : id, name: name, amount: amount, day: parseInt(data.day, 10) || 1, category: data.category || 'Autre', site: site, image: sheetDraft.image };
+      var freq = data.frequency === 'year' ? 'year' : 'month';
+      var item = {
+        id: isNew ? uid() : id, name: name, amount: amount,
+        day: parseInt(data.day, 10) || 1,
+        frequency: freq,
+        month: freq === 'year' ? Math.min(11, Math.max(0, parseInt(data.month, 10) || 0)) : (s.month || 0),
+        category: data.category || 'Autre', site: site, image: sheetDraft.image
+      };
       if (isNew) state.subs.push(item);
       else state.subs = state.subs.map(function (x) { return x.id === id ? item : x; });
       toast(isNew ? 'Abonnement ajouté' : 'Abonnement modifié');
@@ -949,6 +990,11 @@
   document.addEventListener('change', function (e) {
     var el = e.target;
     if (el.dataset.input === 'sv-input') fillSavings();
+    if (el.dataset.input === 'sub-freq') {
+      var year = el.value === 'year';
+      document.getElementById('amount-label').textContent = year ? 'Montant par an (€)' : 'Montant par mois (€)';
+      document.getElementById('month-field').hidden = !year;
+    }
     if (el.dataset.input === 'photo' && el.files && el.files[0]) setPhoto(el.files[0]);
     if (el.dataset.input === 'sub-image' && el.files && el.files[0]) {
       squareImage(el.files[0], 160, function (data) { sheetDraft.image = data; refreshDraftTile(); });
