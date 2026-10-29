@@ -12,6 +12,17 @@ Web app pour savoir ce qu'il te reste chaque mois, après ton épargne et tes ab
 | `manifest.webmanifest` | Nom, icône et couleurs de l'app installée |
 | `sw.js` | Garde l'app disponible sans connexion |
 | `icons/` | Icône de l'app (180, 192 et 512 px) |
+| `vendor/pdfjs/` | [pdf.js](https://mozilla.github.io/pdf.js/) 3.11.174 (Mozilla, licence Apache 2.0), pour lire les factures et relevés en PDF |
+
+## Importer un relevé ou une facture
+
+Dans **Abonnements**, touche **Ajouter** puis **Importer un relevé ou une facture** (ou le lien en bas de la liste).
+
+- **Relevé bancaire en CSV** (Revolut, BNP, Caisse d'Épargne, PayPal…) : Finy repère les paiements qui reviennent chaque mois ou chaque année au même montant, et te propose une liste à cocher. Il faut au moins deux prélèvements par abonnement, donc un relevé de plusieurs mois. Si le format n'est pas reconnu, Finy te demande quelle colonne contient la date, le libellé et le montant.
+- **Facture en PDF** : Finy remplit le formulaire (service, montant total, fréquence, jour) et tu vérifies avant d'ajouter. Les PDF scannés (images) ne sont pas lisibles.
+- **Relevé en PDF** : lu comme un CSV, mais le sens des opérations (débit ou crédit) se perd souvent : décoche ce qui n'est pas un abonnement.
+
+Le fichier est lu sur le téléphone et n'est jamais envoyé.
 
 ## Mettre en ligne sur GitHub Pages
 
