@@ -624,3 +624,8 @@ button.row:active, a.row:active { transform: scale(.985); }
 
   .toast { left: calc(50% + var(--sidebar-w) / 2); bottom: 32px; }
 }
+
+/* Import : liste des abonnements trouvés, à cocher */
+.pick { cursor: pointer; }
+.pick input { flex: none; width: 22px; height: 22px; margin: 0; accent-color: var(--accent); }
+.row-link svg, .link-btn svg { width: 18px; height: 18px; stroke: currentColor; stroke-width: 2; fill: none; }

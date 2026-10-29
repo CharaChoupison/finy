@@ -436,7 +436,8 @@
     html += '</section>';
 
     if (!state.subs.length) {
-      return html + '<div class="group a-main"><div class="empty"><span>Aucun abonnement pour l\'instant.</span><span class="caption">Ajoute tes paiements récurrents pour voir où part ton argent.</span></div></div>';
+      return html + '<div class="group a-main"><div class="empty"><span>Aucun abonnement pour l\'instant.</span><span class="caption">Ajoute tes paiements récurrents pour voir où part ton argent.</span></div>' +
+        importButton('row row-link') + '</div>';
     }
 
     var present = SUB_CATEGORIES.filter(function (c) { return state.subs.some(function (s) { return s.category === c; }); });
@@ -465,8 +466,15 @@
       }).join('') + '</div></section>';
 
     html += '<section class="section a-main"><div class="section-head"><h2 class="heading" id="abos-title"></h2><span class="label" style="font-weight:400">Par date</span></div>' +
-      '<div class="group" id="abos-list"></div></section>';
+      '<div class="group" id="abos-list"></div><div class="group">' + importButton('row row-link') + '</div></section>';
     return html;
+  }
+
+  // Relevé bancaire (CSV ou PDF) ou facture (PDF).
+  function importButton(cls) {
+    var style = cls === 'link-btn' ? 'display:inline-flex;align-items:center;gap:6px;cursor:pointer' : 'cursor:pointer';
+    return '<label class="' + cls + '" style="' + style + '">' + icon('upload') + 'Importer un relevé ou une facture' +
+      '<input type="file" accept=".csv,text/csv,application/pdf,.pdf" class="sr-only" data-input="statement"></label>';
   }
 
   function fillAbosList() {
@@ -771,10 +779,11 @@
     });
   }
 
-  function editSub(id) {
+  // `preset` pré-remplit un nouvel abonnement (lu dans une facture).
+  function editSub(id, preset) {
     var s = state.subs.filter(function (x) { return x.id === id; })[0];
     var isNew = !s;
-    s = s || { name: '', amount: 0, day: today().getDate(), month: today().getMonth(), frequency: 'month', category: 'Streaming', site: '', image: null };
+    s = s || Object.assign({ name: '', amount: 0, day: today().getDate(), month: today().getMonth(), frequency: 'month', category: 'Streaming', site: '', image: null }, preset);
     var yearly = s.frequency === 'year';
     var months = '';
     for (var mo = 0; mo < 12; mo++) {
@@ -785,7 +794,7 @@
     if (cats.indexOf(s.category) < 0) cats.push(s.category);
     var days = '';
     for (var d = 1; d <= 31; d++) days += '<option value="' + d + '"' + (d === s.day ? ' selected' : '') + '>' + d + '</option>';
-    var body = '<div class="image-pick"><span id="draft-tile">' + subTile(sheetDraft, 'tile-lg') + '</span>' +
+    var body = (isNew && !preset ? importButton('link-btn') : '') + '<div class="image-pick"><span id="draft-tile">' + subTile(sheetDraft, 'tile-lg') + '</span>' +
       '<div class="image-pick-actions"><label class="link-btn" style="display:inline-flex;align-items:center;cursor:pointer">Choisir une image<input type="file" accept="image/*" class="sr-only" data-input="sub-image"></label>' +
       '<button type="button" class="link-btn" data-action="sub-image-remove" style="color:var(--muted)"' + (s.image ? '' : ' hidden') + '>Retirer l\'image</button></div></div>' +
       '<label class="field"><span>Nom</span><input class="input" name="name" type="text" maxlength="60" autocomplete="off" placeholder="Netflix, Orange…" value="' + esc(s.name) + '" data-input="sub-name"></label>' +
@@ -971,6 +980,386 @@
     if (rm) rm.hidden = !sheetDraft.image;
   }
 
+  // ---------- Import : relevé bancaire (CSV) et facture (PDF) ----------
+  // Le fichier est lu sur l'appareil : rien n'est envoyé.
+
+  // Services connus : nom affiché, site (pour le logo) et catégorie. Les plus précis d'abord.
+  var KNOWN = [
+    [/netflix/, 'Netflix', 'netflix.com', 'Streaming'],
+    [/spotify/, 'Spotify', 'spotify.com', 'Streaming'],
+    [/deezer/, 'Deezer', 'deezer.com', 'Streaming'],
+    [/disney/, 'Disney+', 'disneyplus.com', 'Streaming'],
+    [/canal ?\+|canalplus|canal plus/, 'Canal+', 'canalplus.com', 'Streaming'],
+    [/crunchyroll/, 'Crunchyroll', 'crunchyroll.com', 'Streaming'],
+    [/youtube/, 'YouTube Premium', 'youtube.com', 'Streaming'],
+    [/prime ?video|amazon ?prime|amzn ?prime/, 'Amazon Prime', 'amazon.fr', 'Streaming'],
+    [/apple ?music/, 'Apple Music', 'apple.com', 'Streaming'],
+    [/icloud/, 'iCloud+', 'icloud.com', 'Logiciels'],
+    [/apple\.com\/bill|apple ?com ?bill|itunes/, 'Apple', 'apple.com', 'Logiciels'],
+    [/google ?one/, 'Google One', 'one.google.com', 'Logiciels'],
+    [/openai|chatgpt/, 'ChatGPT', 'openai.com', 'Logiciels'],
+    [/anthropic|claude\.ai/, 'Claude', 'claude.ai', 'Logiciels'],
+    [/discord/, 'Discord', 'discord.com', 'Jeux'],
+    [/xbox|game ?pass/, 'Xbox Game Pass', 'xbox.com', 'Jeux'],
+    [/playstation|sony interactive/, 'PlayStation Plus', 'playstation.com', 'Jeux'],
+    [/nintendo/, 'Nintendo Switch Online', 'nintendo.com', 'Jeux'],
+    [/microsoft|office ?365/, 'Microsoft 365', 'microsoft.com', 'Logiciels'],
+    [/adobe/, 'Adobe', 'adobe.com', 'Logiciels'],
+    [/notion/, 'Notion', 'notion.so', 'Logiciels'],
+    [/dropbox/, 'Dropbox', 'dropbox.com', 'Logiciels'],
+    [/free ?mobile|free ?telecom|freebox/, 'Free', 'free.fr', 'Téléphonie'],
+    [/sosh/, 'Sosh', 'sosh.fr', 'Téléphonie'],
+    [/orange/, 'Orange', 'orange.fr', 'Téléphonie'],
+    [/\bsfr\b/, 'SFR', 'sfr.fr', 'Téléphonie'],
+    [/bouygues|b ?and ?you/, 'Bouygues Telecom', 'bouyguestelecom.fr', 'Téléphonie'],
+    [/basic ?fit/, 'Basic-Fit', 'basic-fit.com', 'Sport'],
+    [/fitness ?park/, 'Fitness Park', 'fitnesspark.fr', 'Sport'],
+    [/navigo|ratp/, 'Navigo', 'iledefrance-mobilites.fr', 'Transport']
+  ];
+
+  // Virements, recharges, remboursements : jamais des abonnements.
+  var NOT_A_SUB = /^(a |to |from |de |a partir de|recharge|top.?up|virement|vir |payment from|transfer|retrait|withdrawal|remboursement|refund|salaire)/;
+
+  // Minuscules sans accents, pour comparer des libellés.
+  function fold(s) {
+    return String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  }
+
+  function knownService(text) {
+    var t = fold(text);
+    for (var i = 0; i < KNOWN.length; i++) {
+      if (KNOWN[i][0].test(t)) return { name: KNOWN[i][1], site: KNOWN[i][2], category: KNOWN[i][3] };
+    }
+    return null;
+  }
+
+  // « PRLV SEPA CRUNCHYROLL 12/10 REF 8823 » → « crunchyroll »
+  function cleanLabel(label) {
+    return fold(label)
+      .replace(/\d{1,2}[\/.\-]\d{1,2}([\/.\-]\d{2,4})?/g, ' ')
+      .replace(/\b(prlv|prelevement|prelev|sepa|facture|paiement|carte|cb|achat|du|le|par|ech|echeance|ref|mandat|ics|rum)\b/g, ' ')
+      .replace(/x\d{2,}|\*+\S*|#\S+|\b\d{3,}\b/g, ' ')
+      .replace(/[^a-z0-9.&+' -]/g, ' ')
+      .replace(/\s+/g, ' ').trim();
+  }
+
+  function monthIndex(word) {
+    var w = fold(word).replace(/\.$/, '');
+    if (/^(juil|jul)/.test(w)) return 6;
+    if (/^(juin|jun)/.test(w)) return 5;
+    var map = { jan: 0, fev: 1, feb: 1, mar: 2, avr: 3, apr: 3, mai: 4, may: 4, aou: 7, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11 };
+    return w.length >= 3 && map[w.slice(0, 3)] !== undefined ? map[w.slice(0, 3)] : -1;
+  }
+
+  // Dates d'export bancaire : 2026-10-12, 12/10/2026, 12.10.26, « 12 oct. 2026 ».
+  function parseDate(str) {
+    var t = fold(str).trim(), m;
+    var make = function (y, mo, d) {
+      return mo >= 0 && mo <= 11 && d >= 1 && d <= 31 && y >= 2000 && y <= 2100 ? new Date(y, mo, d) : null;
+    };
+    if ((m = t.match(/^(\d{4})-(\d{2})-(\d{2})/))) return make(+m[1], +m[2] - 1, +m[3]);
+    if ((m = t.match(/^(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{4}|\d{2})\b/))) return make(m[3].length === 2 ? 2000 + +m[3] : +m[3], +m[2] - 1, +m[1]);
+    if ((m = t.match(/^(\d{1,2})(?:er)? ([a-z]+)\.? (\d{4})\b/))) return make(+m[3], monthIndex(m[2]), +m[1]);
+    return null;
+  }
+
+  // « -6,99€ », « 1 234,56 », « 1,234.56 », « (6.99) » → nombre signé.
+  function parseMoney(str) {
+    var t = String(str || '').replace(/[\s  €$£]|eur/gi, '');
+    if (!t) return null;
+    var neg = /^-|-$|^\(.*\)$/.test(t);
+    t = t.replace(/[()+-]/g, '');
+    if (t.lastIndexOf(',') > t.lastIndexOf('.')) t = t.replace(/\./g, '').replace(',', '.');
+    else t = t.replace(/,/g, '');
+    if (!/^\d+(\.\d+)?$/.test(t)) return null;
+    var n = Math.round(parseFloat(t) * 100) / 100;
+    return neg ? -n : n;
+  }
+
+  // Les banques françaises exportent souvent en Windows-1252 plutôt qu'en UTF-8.
+  function decodeText(buf) {
+    try { return new TextDecoder('utf-8', { fatal: true }).decode(buf); } catch (e) { return new TextDecoder('windows-1252').decode(buf); }
+  }
+
+  function parseCsv(text) {
+    text = text.replace(/^﻿/, '');
+    var probe = text.split(/\r?\n/).slice(0, 40).join('\n').replace(/"[^"]*"/g, '');
+    var sep = [';', ',', '\t'].sort(function (a, b) { return probe.split(b).length - probe.split(a).length; })[0];
+    var rows = [], row = [], cell = '', quoted = false;
+    for (var i = 0; i < text.length; i++) {
+      var ch = text[i];
+      if (quoted) {
+        if (ch !== '"') cell += ch;
+        else if (text[i + 1] === '"') { cell += '"'; i++; }
+        else quoted = false;
+      } else if (ch === '"') quoted = true;
+      else if (ch === sep) { row.push(cell.trim()); cell = ''; }
+      else if (ch === '\n' || ch === '\r') {
+        if (ch === '\r' && text[i + 1] === '\n') i++;
+        row.push(cell.trim()); rows.push(row); row = []; cell = '';
+      } else cell += ch;
+    }
+    if (cell || row.length) { row.push(cell.trim()); rows.push(row); }
+    return rows;
+  }
+
+  // Reconnaît une ligne d'en-tête (Revolut, BNP, Caisse d'Épargne, PayPal…) et repère ses colonnes.
+  function headerCols(row, next) {
+    var f = row.map(fold), c = {}, labels = [];
+    f.forEach(function (h, i) {
+      if (c.date == null && /^date/.test(h)) c.date = i;
+      else if (/libelle|description|^nom$|^name$|beneficiaire|^detail|marchand|merchant|tiers|intitule/.test(h)) labels.push(i);
+      else if (c.amount == null && /montant|amount|argent entrant|^brut$|^gross$|somme/.test(h)) c.amount = i;
+      else if (c.debit == null && /debit/.test(h)) c.debit = i;
+      else if (c.credit == null && /credit/.test(h)) c.credit = i;
+    });
+    if (c.date == null || !labels.length || (c.amount == null && c.debit == null)) return null;
+    // Plusieurs colonnes de libellé (« Libellé court », « Libellé opération ») : on garde la plus détaillée.
+    var avg = function (i) { return next.reduce(function (a, r) { return a + (r[i] || '').length; }, 0); };
+    c.label = labels.sort(function (a, b) { return avg(b) - avg(a); })[0];
+    return c;
+  }
+
+  function readRow(r, c) {
+    var date = parseDate(r[c.date] || '');
+    if (!date) return null;
+    var amount;
+    if (c.amount != null) amount = parseMoney(r[c.amount]);
+    else {
+      var d = parseMoney(r[c.debit]), cr = c.credit != null ? parseMoney(r[c.credit]) : null;
+      amount = d === null && cr === null ? null : Math.abs(cr || 0) - Math.abs(d || 0);
+    }
+    return amount === null ? null : { date: date, label: r[c.label] || '', amount: amount };
+  }
+
+  // Paiements au même nom, au même montant (±10 %), qui reviennent chaque mois ou chaque année.
+  function findRecurring(tx) {
+    var groups = {};
+    tx.forEach(function (t) {
+      if (!(t.amount < 0) || NOT_A_SUB.test(fold(t.label).trim())) return;
+      var known = knownService(t.label);
+      var clean = cleanLabel(t.label);
+      var key = known ? known.name : clean.split(' ').slice(0, 3).join(' ');
+      if (!key) return;
+      (groups[key] = groups[key] || { known: known, clean: clean, items: [] }).items.push({ date: t.date, amount: -t.amount });
+    });
+    var out = [];
+    Object.keys(groups).forEach(function (key) {
+      var g = groups[key];
+      var items = g.items.sort(function (a, b) { return a.date - b.date; }).filter(function (it, i, arr) {
+        return i === 0 || diffDays(it.date, arr[i - 1].date) > 0;
+      });
+      if (items.length < 2) return;
+      var amounts = items.map(function (it) { return it.amount; }).sort(function (a, b) { return a - b; });
+      var mid = amounts[Math.floor(amounts.length / 2)];
+      if (amounts[amounts.length - 1] - amounts[0] > Math.max(1, mid * 0.1)) return;
+      var gaps = items.slice(1).map(function (it, i) { return diffDays(it.date, items[i].date); });
+      var freq = null;
+      if (gaps.every(function (d) { return d >= 350 && d <= 380; })) freq = 'year';
+      else if (gaps.some(function (d) { return d <= 35; }) && gaps.every(function (d) {
+        var k = Math.round(d / 30.44);
+        return k >= 1 && k <= 3 && Math.abs(d - k * 30.44) <= 5;
+      })) freq = 'month';
+      if (!freq) return;
+      var last = items[items.length - 1];
+      out.push({
+        name: g.known ? g.known.name : g.clean.split(' ').slice(0, 4).map(cap).join(' '),
+        site: g.known ? g.known.site : '',
+        category: g.known ? g.known.category : 'Autre',
+        amount: last.amount, day: last.date.getDate(), month: last.date.getMonth(),
+        frequency: freq, count: items.length, image: null
+      });
+    });
+    return out.sort(function (a, b) { return b.amount - a.amount; });
+  }
+
+  function alreadyHave(c) {
+    var n = fold(c.name);
+    return state.subs.some(function (s) {
+      var m = fold(s.name);
+      return m.length >= 3 && n.length >= 3 && (m.indexOf(n) >= 0 || n.indexOf(m) >= 0);
+    });
+  }
+
+  function importStatement(text) {
+    var rows = parseCsv(text);
+    var tx = [], cols = null;
+    rows.forEach(function (r, i) {
+      var h = headerCols(r, rows.slice(i + 1, i + 16));
+      if (h) { cols = h; return; }
+      var t = cols && readRow(r, cols);
+      if (t) tx.push(t);
+    });
+    if (!tx.length) return askColumns(rows);
+    showFound(findRecurring(tx));
+  }
+
+  // Relevé dans un format inconnu : on demande quelle colonne contient quoi.
+  function askColumns(rows) {
+    var start = -1;
+    rows.some(function (r, i) { if (r.some(function (c) { return parseDate(c); })) { start = i; return true; } return false; });
+    if (start < 0) return toast("Ce fichier ne ressemble pas à un relevé bancaire");
+    var sample = rows[start];
+    var head = start > 0 ? rows[start - 1] : [];
+    var guess = { date: -1, label: -1, amount: -1 };
+    sample.forEach(function (c, i) {
+      if (guess.date < 0 && parseDate(c)) guess.date = i;
+      else if (guess.amount < 0 && parseMoney(c) !== null) guess.amount = i;
+      else if (parseMoney(c) === null && (guess.label < 0 || c.length > sample[guess.label].length)) guess.label = i;
+    });
+    var select = function (name, label) {
+      return '<label class="field"><span>' + label + '</span><select class="input" name="' + name + '">' + sample.map(function (c, i) {
+        var title = head[i] && !parseDate(head[i]) ? head[i] : 'Colonne ' + (i + 1);
+        return '<option value="' + i + '"' + (i === guess[name] ? ' selected' : '') + '>' + esc(title + (c ? ' · ' + c.slice(0, 24) : '')) + '</option>';
+      }).join('') + '</select></label>';
+    };
+    var body = '<p class="caption">Finy ne reconnaît pas ce relevé. Indique quelle colonne contient quoi.</p>' +
+      select('date', 'Date') + select('label', 'Libellé') + select('amount', 'Montant');
+    openSheet('Colonnes du relevé', body, 'Continuer', function (d) {
+      var cols = { date: +d.date, label: +d.label, amount: +d.amount };
+      var tx = rows.slice(start).map(function (r) { return readRow(r, cols); }).filter(Boolean);
+      // La feuille se ferme juste après : on ouvre la suivante une fois fermée.
+      setTimeout(function () { showFound(findRecurring(tx)); }, 0);
+    });
+  }
+
+  function showFound(found) {
+    if (!found.length) {
+      openSheet('Aucun abonnement trouvé', '<p class="muted">Finy n\'a pas trouvé de paiement qui revient chaque mois ou chaque année au même montant.</p>' +
+        '<p class="caption">Il faut au moins deux prélèvements par abonnement. Essaie avec un relevé qui couvre plusieurs mois.</p>', 'Fermer', null);
+      return;
+    }
+    var body = '<p class="caption">Ces paiements reviennent au même montant. Décoche ceux qui ne sont pas des abonnements.</p><div class="group">' +
+      found.map(function (c, i) {
+        var have = alreadyHave(c);
+        var meta = (have ? 'Déjà dans Finy · ' : '') + (c.frequency === 'year' ? 'Annuel' : 'Mensuel') + ' · le ' + c.day + ' · vu ' + c.count + ' fois';
+        return '<label class="row tall pick">' + subTile(c) +
+          '<span class="row-main"><span class="row-title">' + esc(c.name) + '</span><span class="row-meta"><span>' + meta + '</span></span></span>' +
+          '<span class="row-amount">' + priceLabel(c) + '</span><input type="checkbox" name="pick-' + i + '"' + (have ? '' : ' checked') + ' aria-label="Ajouter ' + esc(c.name) + '"></label>';
+      }).join('') + '</div>';
+    var n = found.length;
+    openSheet(n + ' abonnement' + (n > 1 ? 's trouvés' : ' trouvé'), body, 'Ajouter la sélection', function (data) {
+      var picked = found.filter(function (c, i) { return data['pick-' + i]; });
+      if (!picked.length) return 'Coche au moins un abonnement.';
+      picked.forEach(function (c) {
+        state.subs.push({ id: uid(), name: c.name, amount: c.amount, day: c.day, frequency: c.frequency, month: c.month, category: c.category, site: c.site, image: null });
+      });
+      toast(picked.length + ' abonnement' + (picked.length > 1 ? 's ajoutés' : ' ajouté'));
+    });
+  }
+
+  // pdf.js (environ 1,4 Mo) n'est chargé qu'au premier PDF, puis gardé hors ligne par le service worker.
+  var pdfReady = null;
+  function loadPdfJs() {
+    if (!pdfReady) {
+      pdfReady = new Promise(function (resolve, reject) {
+        var s = document.createElement('script');
+        s.src = 'vendor/pdfjs/pdf.min.js';
+        s.onload = function () {
+          window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'vendor/pdfjs/pdf.worker.min.js';
+          resolve(window.pdfjsLib);
+        };
+        s.onerror = function () { pdfReady = null; reject(); };
+        document.head.appendChild(s);
+      });
+    }
+    return pdfReady;
+  }
+
+  function pdfText(buf) {
+    return loadPdfJs().then(function (lib) {
+      return lib.getDocument({ data: buf, isEvalSupported: false }).promise;
+    }).then(function (doc) {
+      var pages = [];
+      for (var i = 1; i <= Math.min(doc.numPages, 10); i++) {
+        pages.push(doc.getPage(i).then(function (p) { return p.getTextContent(); }).then(function (tc) {
+          return tc.items.map(function (it) { return it.str + (it.hasEOL ? '\n' : ' '); }).join('');
+        }));
+      }
+      return Promise.all(pages).then(function (p) { return p.join('\n'); });
+    });
+  }
+
+  var MONEY_RE = /-?\d{1,3}(?:[ .  ]\d{3})*[,.]\d{2}(?!\d)/g;
+  var DATE_RE = /\b\d{1,2}(?:er)?(?:[\/.\-]\d{1,2}[\/.\-]\d{2,4}| [a-z]{3,9}\.? \d{4})\b/g;
+
+  // Un relevé en PDF : une ligne par opération, qui commence par une date et contient un montant.
+  function statementLines(text) {
+    return text.split('\n').map(function (line) {
+      var l = fold(line).replace(/[ \t  ]+/g, ' ').trim();
+      var date = parseDate(l);
+      if (!date) return null;
+      // Les dates retirées d'abord : « 12.10.26 » ressemble sinon à un montant.
+      var rest = l.replace(DATE_RE, ' ');
+      var money = rest.match(MONEY_RE);
+      if (!money) return null;
+      var label = rest.slice(0, rest.indexOf(money[0])).replace(/\s+/g, ' ').trim();
+      // Le sens (débit ou crédit) se perd souvent dans un PDF : sans signe, on le compte comme une dépense.
+      var n = parseMoney(money[0]);
+      return label && n !== null ? { date: date, label: label, amount: n > 0 ? -n : n } : null;
+    }).filter(Boolean);
+  }
+
+  // Une facture : on cherche le service, le montant total, la fréquence et la date.
+  function readInvoice(text) {
+    var f = fold(text).replace(/[ \t  ]+/g, ' ');
+    var out = {};
+    var known = knownService(f);
+    if (known) { out.name = known.name; out.site = known.site; out.category = known.category; }
+    else {
+      var counts = {};
+      (f.match(/\b[a-z0-9-]+\.(com|fr|net|io|tv|app|ai|co|eu|org)\b/g) || []).forEach(function (d) {
+        if (!/^(gmail|outlook|hotmail|yahoo|icloud|paypal|stripe|example)\./.test(d)) counts[d] = (counts[d] || 0) + 1;
+      });
+      var site = Object.keys(counts).sort(function (a, b) { return counts[b] - counts[a]; })[0];
+      if (site) { out.site = site; out.name = cap(site.split('.')[0]); }
+    }
+    // Montant : le plus grand près de « total », « à payer », « montant »… sinon le plus grand avec un €.
+    var best = null, bestKey = null, m;
+    var re = /(€|eur\b)?\s?(\d{1,3}(?:[ .]\d{3})*[,.]\d{2})(?!\d)\s?(€|eur\b)?/g;
+    while ((m = re.exec(f))) {
+      if (!m[1] && !m[3]) continue;
+      var n = parseMoney(m[2]);
+      if (!n) continue;
+      var before = f.slice(Math.max(0, m.index - 50), m.index);
+      if (/total|a payer|montant|ttc|preleve|amount due|charged/.test(before) && !/tva|vat|\bht\b|hors taxe/.test(before.slice(-15))) {
+        if (bestKey === null || n > bestKey) bestKey = n;
+      }
+      if (best === null || n > best) best = n;
+    }
+    if (bestKey !== null || best !== null) out.amount = bestKey !== null ? bestKey : best;
+    out.frequency = /annuel|par an\b|\/ ?an\b|12 mois|yearly|annual|per year|\/ ?year/.test(f) ? 'year' : 'month';
+    var dates = (f.match(DATE_RE) || []).map(parseDate).filter(Boolean);
+    if (dates.length) { out.day = dates[0].getDate(); out.month = dates[0].getMonth(); }
+    return out;
+  }
+
+  function importPdf(buf) {
+    toast('Lecture du PDF…');
+    pdfText(buf).then(function (text) {
+      if (text.replace(/\s/g, '').length < 20) return toast('Ce PDF est une image scannée : Finy ne peut pas le lire');
+      var lines = statementLines(text);
+      var found = lines.length >= 8 ? null : readInvoice(text);
+      if (found && !found.name && !found.amount) return toast("Finy n'a rien trouvé dans ce PDF");
+      if (!found) return showFound(findRecurring(lines));
+      editSub(null, found);
+      toast('Vérifie les infos avant d\'ajouter');
+    }, function () { toast('Impossible de lire ce PDF'); });
+  }
+
+  function importFile(file) {
+    var isPdf = /pdf$/i.test(file.type) || /\.pdf$/i.test(file.name);
+    // Le fichier a pu être choisi depuis la feuille « Nouvel abonnement » : on la ferme avant d'en ouvrir une autre.
+    closeSheet();
+    var reader = new FileReader();
+    reader.onload = function () {
+      if (isPdf) importPdf(reader.result);
+      else importStatement(decodeText(reader.result));
+    };
+    reader.onerror = function () { toast('Impossible de lire ce fichier'); };
+    reader.readAsArrayBuffer(file);
+  }
+
   // ---------- Message ----------
 
   var toastTimer = null;
@@ -1095,6 +1484,7 @@
       el.value = '';
     }
     if (el.dataset.input === 'import' && el.files && el.files[0]) { importData(el.files[0]); el.value = ''; }
+    if (el.dataset.input === 'statement' && el.files && el.files[0]) { importFile(el.files[0]); el.value = ''; }
   });
 
   window.addEventListener('hashchange', render);
