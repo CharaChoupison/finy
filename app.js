@@ -133,7 +133,7 @@
   }
 
   var state = load();
-  var ui = { abosFilter: 'Tous', abosQuery: '', calOffset: 0, calSel: null, focusAfter: null };
+  var ui = { abosFilter: 'Tous', abosQuery: '', calOffset: 0, calSel: null, focusAfter: null, counts: {} };
 
   // ---------- Format ----------
 
@@ -296,9 +296,61 @@
     return icon('user');
   }
 
-  function hero(n, cls) {
+  // `key` identifie le montant pour l'animer depuis sa valeur précédente.
+  function hero(n, key) {
     var p = heroParts(n);
-    return '<p class="amount-hero' + (n < 0 ? ' negative' : '') + (cls ? ' ' + cls : '') + '"><span class="int">' + p.int + '</span><span class="dec">' + p.dec + '</span></p>';
+    return '<p class="amount-hero' + (n < 0 ? ' negative' : '') + '"' + (key ? ' data-count="' + key + '" data-value="' + n + '"' : '') + '><span class="int">' + p.int + '</span><span class="dec">' + p.dec + '</span></p>';
+  }
+
+  // ---------- Animations ----------
+
+  var reduceMotion = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+
+  // Fait défiler les montants marqués data-count de leur ancienne valeur à la nouvelle.
+  function runCounters(root) {
+    (root || document).querySelectorAll('[data-count]').forEach(function (el) {
+      var key = el.dataset.count;
+      var to = parseFloat(el.dataset.value);
+      var from = key in ui.counts ? ui.counts[key] : 0;
+      ui.counts[key] = to;
+      if (reduceMotion || !isFinite(to) || Math.abs(from - to) < 0.005) return;
+      var paint = el.dataset.kind === 'big'
+        ? function (v) { el.textContent = euro(v); }
+        : function (v) { var q = heroParts(v); el.innerHTML = '<span class="int">' + q.int + '</span><span class="dec">' + q.dec + '</span>'; };
+      var start = performance.now();
+      var dur = 650;
+      var done = false;
+      var token = (el._countToken || 0) + 1;
+      el._countToken = token;
+      paint(from);
+      (function step(now) {
+        if (done || el._countToken !== token) return;
+        var k = Math.min(1, (now - start) / dur);
+        var eased = 1 - Math.pow(1 - k, 3);
+        paint(k < 1 ? from + (to - from) * eased : to);
+        if (k < 1) requestAnimationFrame(step); else done = true;
+      })(start);
+      // Sécurité : si l'animation est mise en pause (app en arrière-plan), le bon montant s'affiche quand même.
+      setTimeout(function () {
+        if (!done && el._countToken === token) { done = true; paint(to); }
+      }, dur + 80);
+    });
+  }
+
+  // Rejoue une animation CSS d'arrivée sur un élément.
+  function playEnter(el, cls) {
+    if (!el || reduceMotion) return;
+    el.classList.remove(cls);
+    void el.offsetWidth;
+    el.classList.add(cls);
+    clearTimeout(el._enterTimer);
+    el._enterTimer = setTimeout(function () { el.classList.remove(cls); }, 900);
+  }
+
+  // Laisse l'interrupteur glisser avant de redessiner l'écran.
+  function flipSwitch(el, then) {
+    if (el) el.setAttribute('aria-checked', String(el.getAttribute('aria-checked') !== 'true'));
+    setTimeout(then, reduceMotion ? 0 : 200);
   }
 
   // ---------- Écran : Accueil ----------
@@ -314,7 +366,7 @@
         '<p class="muted">Finy calcule ensuite ce qu\'il te reste chaque mois, après ton épargne et tes abonnements.</p>' +
         '<button type="button" class="btn btn-primary btn-block" data-action="edit-salary" style="margin-top:16px">Indiquer mon salaire</button></section>';
     } else {
-      html += '<section class="hero a-hero" aria-label="Ce qu\'il te reste"><p class="label">Il te reste ce mois-ci</p>' + hero(t.rest) +
+      html += '<section class="hero a-hero" aria-label="Ce qu\'il te reste"><p class="label">Il te reste ce mois-ci</p>' + hero(t.rest, 'rest') +
         '<p class="pill-info"><span class="strong">' + euro(t.weekly) + '</span><span class="muted">pour te faire plaisir cette semaine</span></p></section>';
     }
 
@@ -373,7 +425,7 @@
     var monthWord = new Intl.DateTimeFormat('fr-FR', { month: 'long' }).format(today());
     html += '<section class="hero a-hero" aria-label="Total">' +
       (yc ? '<p class="label">' + (smooth ? 'Par mois, annuels lissés' : 'Prélevé en ' + monthWord) + '</p>' : '') +
-      '<p class="amount-big">' + euro(t.subs) + '<small>/mois</small></p>' +
+      '<p class="amount-big"><span data-count="subs" data-kind="big" data-value="' + t.subs + '">' + euro(t.subs) + '</span><small>/mois</small></p>' +
       '<p class="label" style="font-weight:400">' + euro(yearTotal()) + ' sur un an · ' + state.subs.length + ' abonnement' + (state.subs.length > 1 ? 's' : '') +
       (yc && smooth ? ', dont ' + euro(smoothPart) + ' pour ' + yc + ' annuel' + (yc > 1 ? 's' : '') : '') + '</p>';
     if (yc) {
@@ -520,7 +572,8 @@
     var heroEl = document.getElementById('sv-hero');
     if (!heroEl) return;
     var t = totals();
-    heroEl.innerHTML = hero(state.savings);
+    heroEl.innerHTML = hero(state.savings, 'savings');
+    runCounters(heroEl);
     var pct = state.salary > 0 ? Math.round(state.savings / state.salary * 100) + ' % de ton salaire · ' : '';
     document.getElementById('sv-sub').textContent = pct + euro(state.savings * 12) + ' sur un an';
     if (!skipInput) document.getElementById('sv-input').value = plain(state.savings);
@@ -625,7 +678,9 @@
     var scroll = key === lastRoute ? window.scrollY : 0;
     view.dataset.route = key || 'accueil';
     view.innerHTML = r.view();
+    if (key !== lastRoute) playEnter(view, 'enter');
     if (r.after) r.after();
+    runCounters(view);
     document.querySelectorAll('.tabbar a').forEach(function (a) {
       if (a.dataset.tab === r.tab) a.setAttribute('aria-current', 'page');
       else a.removeAttribute('aria-current');
@@ -634,7 +689,7 @@
     if (ui.focusAfter) {
       var target = document.getElementById(ui.focusAfter);
       ui.focusAfter = null;
-      if (target) { target.scrollIntoView({ block: 'start' }); return; }
+      if (target) { target.scrollIntoView({ block: 'start' }); lastRoute = key; return; }
     }
     window.scrollTo(0, scroll);
     if (key !== lastRoute) view.focus({ preventScroll: true });
@@ -826,9 +881,11 @@
 
   function toggleReminders() {
     var r = state.settings.reminders;
+    var sw = document.querySelector('[data-action="toggle-reminders"]');
     if (r.enabled) {
       r.enabled = false;
-      save(); render();
+      save();
+      flipSwitch(sw, render);
       return;
     }
     if (!('Notification' in window)) return toast('Notifications indisponibles ici');
@@ -838,8 +895,8 @@
         return;
       }
       r.enabled = true;
-      save(); render();
-      checkReminders();
+      save();
+      flipSwitch(sw, function () { render(); checkReminders(); });
     });
   }
 
@@ -957,6 +1014,7 @@
       case 'abos-filter':
         ui.abosFilter = v;
         document.querySelectorAll('.chip[data-action="abos-filter"]').forEach(function (c) { c.setAttribute('aria-pressed', String(c.dataset.value === v)); });
+        playEnter(document.getElementById('abos-list'), 'list-enter');
         return fillAbosList();
       case 'cal-prev': ui.calOffset--; ui.calSel = null; return render();
       case 'cal-next': ui.calOffset++; ui.calSel = null; return render();
@@ -981,7 +1039,7 @@
       case 'toggle-reminders': return toggleReminders();
       case 'toggle-sameday':
         state.settings.reminders.sameDay = !state.settings.reminders.sameDay;
-        save(); return render();
+        save(); return flipSwitch(el, render);
       case 'test-notif':
         if (!('Notification' in window) || Notification.permission !== 'granted') return toast('Autorise d\'abord les notifications');
         notify('Finy', 'Les rappels fonctionnent. Finy te préviendra avant tes prélèvements.', 'finy-test');
