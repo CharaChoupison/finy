@@ -234,20 +234,20 @@
 
   function viewHome() {
     var t = totals();
-    var html = '<header class="topbar"><span class="logo">' + LOGO + 'finy</span>' +
+    var html = '<header class="topbar a-top"><span class="logo">' + LOGO + 'finy</span>' +
       '<a href="#/reglages" class="icon-btn" aria-label="Ouvrir les réglages">' + avatarInner() + '</a></header>';
 
     if (state.salary <= 0) {
-      html += '<section class="hero"><p class="label">Bienvenue' + (state.profile.name ? ' ' + esc(state.profile.name) : '') + '</p>' +
+      html += '<section class="hero a-hero"><p class="label">Bienvenue' + (state.profile.name ? ' ' + esc(state.profile.name) : '') + '</p>' +
         '<h1 class="title">Commence par ton salaire</h1>' +
         '<p class="muted">Finy calcule ensuite ce qu\'il te reste chaque mois, après ton épargne et tes abonnements.</p>' +
         '<button type="button" class="btn btn-primary btn-block" data-action="edit-salary" style="margin-top:16px">Indiquer mon salaire</button></section>';
     } else {
-      html += '<section class="hero" aria-label="Ce qu\'il te reste"><p class="label">Il te reste ce mois-ci</p>' + hero(t.rest) +
+      html += '<section class="hero a-hero" aria-label="Ce qu\'il te reste"><p class="label">Il te reste ce mois-ci</p>' + hero(t.rest) +
         '<p class="pill-info"><span class="strong">' + euro(t.weekly) + '</span><span class="muted">pour te faire plaisir cette semaine</span></p></section>';
     }
 
-    html += '<section class="actions" aria-label="Actions rapides">' +
+    html += '<section class="actions a-actions" aria-label="Actions rapides">' +
       action('add-sub', 'plus', 'Ajouter') + action('edit-salary', 'wallet', 'Salaire') +
       action('add-cat', 'grid', 'Catégorie') + action('go-reminders', 'bell', 'Rappels') + '</section>';
 
@@ -262,7 +262,7 @@
       var bar = parts.concat([{ name: 'Libre', value: Math.max(0, t.free), color: 'var(--border)' }]);
       var aria = bar.filter(function (p) { return p.value > 0; }).map(function (p) { return p.name + ' ' + euro(p.value); }).join(', ');
 
-      html += '<section class="section"><div class="section-head"><h2 class="heading">Répartition</h2>' +
+      html += '<section class="section a-main"><div class="section-head"><h2 class="heading">Répartition</h2>' +
         '<span class="label">Salaire ' + euro(state.salary) + '</span></div>' + splitBar(bar, aria) + '<div class="group">' +
         parts.map(function (p) {
           var inner = '<span class="dot" style="--c:' + p.color + '" aria-hidden="true"></span><span class="row-main"><span class="row-title">' + esc(p.name) + '</span></span><span class="row-amount">' + euro(p.value) + '</span>';
@@ -278,7 +278,7 @@
     }
 
     var next = upcoming().slice(0, state.settings.homeCount);
-    html += '<section class="section"><div class="section-head"><h2 class="heading">À venir</h2><a href="#/calendrier" class="label" style="color:var(--accent)">Calendrier</a></div><div class="group">' +
+    html += '<section class="section a-side"><div class="section-head"><h2 class="heading">À venir</h2><a href="#/calendrier" class="label" style="color:var(--accent)">Calendrier</a></div><div class="group">' +
       (next.length ? next.map(function (u) { return subRow(u, false); }).join('')
         : '<div class="empty"><span>Aucun abonnement pour l\'instant.</span><button type="button" class="link-btn" data-action="add-sub">Ajouter mon premier abonnement</button></div>') +
       '</div></section>';
@@ -293,21 +293,21 @@
 
   function viewAbos() {
     var t = totals();
-    var html = '<header class="topbar"><h1 class="title">Abonnements</h1>' +
+    var html = '<header class="topbar a-top"><h1 class="title">Abonnements</h1>' +
       '<button type="button" class="btn btn-primary" data-action="add-sub">' + icon('plus') + 'Ajouter</button></header>';
 
-    html += '<section class="hero" aria-label="Total"><p class="amount-big">' + euro(t.subs) + '<small>/mois</small></p>' +
+    html += '<section class="hero a-hero" aria-label="Total"><p class="amount-big">' + euro(t.subs) + '<small>/mois</small></p>' +
       '<p class="label" style="font-weight:400">' + euro(t.subs * 12) + ' sur un an · ' + state.subs.length + ' abonnement' + (state.subs.length > 1 ? 's' : '') + '</p></section>';
 
     if (!state.subs.length) {
-      return html + '<div class="group"><div class="empty"><span>Aucun abonnement pour l\'instant.</span><span class="caption">Ajoute tes paiements récurrents pour voir où part ton argent.</span></div></div>';
+      return html + '<div class="group a-main"><div class="empty"><span>Aucun abonnement pour l\'instant.</span><span class="caption">Ajoute tes paiements récurrents pour voir où part ton argent.</span></div></div>';
     }
 
     var present = SUB_CATEGORIES.filter(function (c) { return state.subs.some(function (s) { return s.category === c; }); });
     state.subs.forEach(function (s) { if (present.indexOf(s.category) < 0) present.push(s.category); });
     if (ui.abosFilter !== 'Tous' && present.indexOf(ui.abosFilter) < 0) ui.abosFilter = 'Tous';
 
-    html += '<div class="section" style="gap:12px"><label class="search">' + icon('search') +
+    html += '<div class="section a-actions" style="gap:12px"><label class="search">' + icon('search') +
       '<span class="sr-only">Rechercher un abonnement</span><input type="search" id="abos-q" placeholder="Rechercher" autocomplete="off" value="' + esc(ui.abosQuery) + '" data-input="abos-q"></label>' +
       '<div class="chips" role="group" aria-label="Filtrer par catégorie">' +
       ['Tous'].concat(present).map(function (c) {
@@ -321,13 +321,13 @@
     if (cats.length > 4) {
       shown.push({ name: 'Autres', value: cats.slice(4).reduce(function (a, c) { return a + c.value; }, 0), color: 'var(--chart-2)' });
     }
-    html += '<section class="section"><h2 class="heading">Par catégorie</h2>' +
+    html += '<section class="section a-side"><h2 class="heading">Par catégorie</h2>' +
       splitBar(shown, shown.map(function (c) { return c.name + ' ' + euro(c.value); }).join(', ')) +
       '<div class="legend">' + shown.map(function (c) {
         return '<div><span class="dot sm" style="--c:' + c.color + '" aria-hidden="true"></span><span class="name">' + esc(c.name) + '</span><span class="strong">' + euro(c.value) + '</span></div>';
       }).join('') + '</div></section>';
 
-    html += '<section class="section"><div class="section-head"><h2 class="heading" id="abos-title"></h2><span class="label" style="font-weight:400">Par date</span></div>' +
+    html += '<section class="section a-main"><div class="section-head"><h2 class="heading" id="abos-title"></h2><span class="label" style="font-weight:400">Par date</span></div>' +
       '<div class="group" id="abos-list"></div></section>';
     return html;
   }
@@ -365,8 +365,8 @@
       ? state.subs.length + ' prélèvement' + (state.subs.length > 1 ? 's' : '') + ' · ' + euro(monthTotal) + (left < monthTotal && left > 0 ? ' · reste ' + euro(left) : left === 0 && onDay(y, m, 1) <= t ? ' · tout est prélevé' : '')
       : 'Aucun prélèvement';
 
-    var html = '<header class="topbar"><h1 class="title">Calendrier</h1><button type="button" class="btn" data-action="cal-today">Aujourd\'hui</button></header>';
-    html += '<section class="section" aria-label="Mois affiché"><div class="month-nav">' +
+    var html = '<header class="topbar a-top"><h1 class="title">Calendrier</h1><button type="button" class="btn" data-action="cal-today">Aujourd\'hui</button></header>';
+    html += '<section class="section a-main" aria-label="Mois affiché"><div class="month-nav">' +
       '<button type="button" class="icon-btn" aria-label="Mois précédent" data-action="cal-prev">' + icon('left') + '</button>' +
       '<div><h2 class="heading">' + cap(monthName.format(first)) + '</h2><span class="caption">' + summary + '</span></div>' +
       '<button type="button" class="icon-btn" aria-label="Mois suivant" data-action="cal-next">' + icon('right') + '</button></div>';
@@ -392,7 +392,7 @@
     html += '</div><div class="cal-legend"><span><i style="--c:var(--accent)"></i>À venir</span><span><i style="--c:var(--warning)"></i>Bientôt</span><span><i style="--c:var(--chart-2)"></i>Déjà prélevé</span></div></section>';
 
     var sel = ui.calSel && ui.calSel <= n ? ui.calSel : null;
-    html += '<section class="section"><h2 class="heading">' + (sel ? cap(longDay.format(new Date(y, m, sel))) : 'Choisis un jour') + '</h2><div class="group">';
+    html += '<section class="section a-side"><h2 class="heading">' + (sel ? cap(longDay.format(new Date(y, m, sel))) : 'Choisis un jour') + '</h2><div class="group">';
     var items = sel ? (byDay[sel] || []) : [];
     if (items.length) {
       var d = diffDays(new Date(y, m, sel), t);
@@ -413,10 +413,10 @@
   // ---------- Écran : Épargne ----------
 
   function viewSavings() {
-    var html = '<header class="topbar"><h1 class="title">Épargne</h1></header>' +
-      '<section class="hero" aria-label="Montant épargné"><p class="label">Tu mets de côté chaque mois</p><div id="sv-hero"></div><p class="label" style="font-weight:400" id="sv-sub"></p></section>';
+    var html = '<header class="topbar a-top"><h1 class="title">Épargne</h1></header>' +
+      '<section class="hero a-hero" aria-label="Montant épargné"><p class="label">Tu mets de côté chaque mois</p><div id="sv-hero"></div><p class="label" style="font-weight:400" id="sv-sub"></p></section>';
 
-    html += '<section class="section" style="gap:12px" aria-label="Modifier le montant"><div class="stepper-box">' +
+    html += '<section class="section a-main" style="gap:12px" aria-label="Modifier le montant"><div class="stepper-box">' +
       '<button type="button" class="icon-btn" aria-label="Retirer 10 €" data-action="sv-step" data-value="-10">' + icon('minus') + '</button>' +
       '<label><span class="sr-only">Montant épargné par mois, en euros</span><input type="text" inputmode="decimal" id="sv-input" data-input="sv-input" value="' + plain(state.savings) + '" autocomplete="off"><span class="muted">€</span></label>' +
       '<button type="button" class="icon-btn" aria-label="Ajouter 10 €" data-action="sv-step" data-value="10">' + icon('plus') + '</button></div>';
@@ -426,7 +426,7 @@
     } else {
       html += '<p class="caption">Indique ton salaire pour voir ce qu\'il te reste. <button type="button" class="link-btn" data-action="edit-salary">Indiquer mon salaire</button></p>';
     }
-    html += '</section><section class="section"><h2 class="heading">Ce qu\'il te reste</h2><div class="group" id="sv-calc"></div><p class="alert" id="sv-alert" hidden>Avec ce montant, tes dépenses fixes dépassent ton salaire. Baisse un peu ton épargne.</p></section>';
+    html += '</section><section class="section a-side"><h2 class="heading">Ce qu\'il te reste</h2><div class="group" id="sv-calc"></div><p class="alert" id="sv-alert" hidden>Avec ce montant, tes dépenses fixes dépassent ton salaire. Baisse un peu ton épargne.</p></section>';
     return html;
   }
 
@@ -520,7 +520,7 @@
     calendrier: { tab: 'calendrier', view: viewCal },
     abonnements: { tab: 'abonnements', view: viewAbos, after: fillAbosList },
     epargne: { tab: 'epargne', view: viewSavings, after: fillSavings },
-    reglages: { tab: null, view: viewSettings }
+    reglages: { tab: 'reglages', view: viewSettings }
   };
 
   function currentRoute() {
@@ -535,6 +535,7 @@
     var r = ROUTES[key];
     var view = document.getElementById('view');
     var scroll = key === lastRoute ? window.scrollY : 0;
+    view.dataset.route = key || 'accueil';
     view.innerHTML = r.view();
     if (r.after) r.after();
     document.querySelectorAll('.tabbar a').forEach(function (a) {
