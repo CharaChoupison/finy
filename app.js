@@ -42,6 +42,7 @@
       savings: 0,
       categories: [],
       subs: [],
+      goals: [],
       settings: {
         theme: 'system',
         homeCount: 3,
@@ -79,6 +80,18 @@
         category: typeof s.category === 'string' && s.category ? s.category.slice(0, 30) : 'Autre',
         site: typeof s.site === 'string' ? (normalizeSite(s.site) || '') : '',
         image: isImageData(s.image) ? s.image : null
+      };
+    }) : [];
+    out.goals = Array.isArray(data.goals) ? data.goals.filter(function (g) {
+      return g && typeof g.name === 'string' && typeof g.target === 'number';
+    }).map(function (g) {
+      return {
+        id: String(g.id || uid()),
+        name: g.name.slice(0, 40),
+        target: Math.max(0, g.target),
+        saved: Math.max(0, num(g.saved, 0)),
+        months: Math.min(600, Math.max(1, Math.round(num(g.months, 12)))),
+        start: /^\d{4}-\d{2}$/.test(g.start) ? g.start : monthKey(new Date())
       };
     }) : [];
     var st = data.settings || {};
@@ -233,7 +246,35 @@
     return 'Dans ' + diff + ' j';
   }
 
+  function monthKey(d) { return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'); }
+
   // ---------- Calculs ----------
+
+  // Objectif d'épargne : la durée part du mois où il a été créé (ou modifié pour la dernière fois).
+  function goalPlan(g) {
+    var t = today();
+    var y = parseInt(g.start.slice(0, 4), 10);
+    var m = parseInt(g.start.slice(5, 7), 10) - 1;
+    var elapsed = (t.getFullYear() - y) * 12 + (t.getMonth() - m);
+    var left = Math.max(1, g.months - Math.max(0, elapsed));
+    var missing = Math.max(0, g.target - g.saved);
+    return {
+      left: left,
+      missing: missing,
+      monthly: missing > 0 ? Math.ceil(missing / left * 100) / 100 : 0,
+      progress: g.target > 0 ? Math.min(1, g.saved / g.target) : 1,
+      end: new Date(y, m + g.months, 1)
+    };
+  }
+
+  function goalsMonthly() {
+    return state.goals.reduce(function (a, g) { return a + goalPlan(g).monthly; }, 0);
+  }
+
+  function durationLabel(months) {
+    if (months % 12 === 0) return months / 12 + (months === 12 ? ' an' : ' ans');
+    return months + ' mois';
+  }
 
   function totals() {
     var subs = state.subs.reduce(function (a, s) { return a + costThisMonth(s); }, 0);
@@ -572,7 +613,9 @@
     } else {
       html += '<p class="caption">Indique ton salaire pour voir ce qu\'il te reste. <button type="button" class="link-btn" data-action="edit-salary">Indiquer mon salaire</button></p>';
     }
-    html += '</section><section class="section a-side"><h2 class="heading">Ce qu\'il te reste</h2><div class="group" id="sv-calc"></div><p class="alert" id="sv-alert" hidden>Avec ce montant, tes dépenses fixes dépassent ton salaire. Baisse un peu ton épargne.</p></section>';
+    html += '</section><section class="section a-goals" aria-label="Objectifs d\'épargne"><div class="section-head"><h2 class="heading">Objectifs</h2>' +
+      '<button type="button" class="link-btn" data-action="add-goal">' + icon('plus') + 'Nouvel objectif</button></div><div id="sv-goals"></div></section>';
+    html += '<section class="section a-side"><h2 class="heading">Ce qu\'il te reste</h2><div class="group" id="sv-calc"></div><p class="alert" id="sv-alert" hidden>Avec ce montant, tes dépenses fixes dépassent ton salaire. Baisse un peu ton épargne.</p></section>';
     return html;
   }
 
@@ -599,6 +642,92 @@
       '<div class="row" style="min-height:60px"><span class="row-main"><span class="strong">Il te reste</span></span><span class="row-amount" style="font-size:20px;line-height:26px;font-weight:700' + (t.rest < 0 ? ';color:var(--danger)' : '') + '">' + euro(t.rest) + '</span></div>' +
       '<div class="row"><span class="row-main"><span class="muted">Pour te faire plaisir chaque semaine</span></span><span class="row-amount">' + euro(t.weekly) + '</span></div>';
     document.getElementById('sv-alert').hidden = !(state.salary > 0 && t.rest < 0);
+    fillGoals();
+  }
+
+  function fillGoals() {
+    var el = document.getElementById('sv-goals');
+    if (!el) return;
+    if (!state.goals.length) {
+      el.innerHTML = '<div class="group"><div class="empty"><span>Un voyage, une voiture, un coussin de sécurité… Donne un montant et une durée : Finy calcule combien mettre de côté chaque mois.</span>' +
+        '<button type="button" class="link-btn" data-action="add-goal">Créer mon premier objectif</button></div></div>';
+      return;
+    }
+    var need = goalsMonthly();
+    var html = '<div class="group">' + state.goals.map(function (g) {
+      var p = goalPlan(g);
+      var meta = p.missing > 0 ? 'Encore ' + durationLabel(p.left) + ' · ' + monthName.format(p.end) : 'Objectif atteint';
+      return '<button type="button" class="row tall goal" data-action="edit-goal" data-id="' + esc(g.id) + '">' +
+        '<span class="row-main"><span class="row-title">' + esc(g.name) + '</span><span class="row-meta"><span>' + meta + '</span></span>' +
+        '<span class="goal-bar" aria-hidden="true"><span style="width:' + (p.progress * 100).toFixed(1) + '%"></span></span>' +
+        '<span class="row-meta"><span>' + euro(g.saved) + ' sur ' + euro(g.target) + '</span></span></span>' +
+        '<span class="row-amount">' + (p.missing > 0 ? euro(p.monthly) + '<small class="per">/mois</small>' : '✓') + '</span></button>';
+    }).join('') + '</div>';
+    if (need > 0) {
+      var gap = need - state.savings;
+      html += '<p class="caption">' + (state.goals.length > 1 ? 'Tes objectifs demandent ' : 'Cet objectif demande ') + '<span class="strong" style="color:var(--ink)">' + euro(need) + ' par mois</span>' +
+        (gap > 0.005
+          ? ', soit ' + euro(gap) + ' de plus que ce que tu mets de côté. <button type="button" class="link-btn" data-action="sv-goals">Épargner ' + euro(need) + ' par mois</button>'
+          : ' : ton épargne de ' + euro(state.savings) + ' les couvre.') + '</p>';
+    }
+    el.innerHTML = html;
+  }
+
+  function editGoal(id) {
+    var g = state.goals.filter(function (x) { return x.id === id; })[0];
+    var isNew = !g;
+    var left = g ? goalPlan(g).left : 12;
+    var inYears = left % 12 === 0;
+    var body = '<label class="field"><span>Nom</span><input class="input" name="name" type="text" maxlength="40" autocomplete="off" placeholder="Voyage au Japon, voiture…" value="' + esc(g ? g.name : '') + '"></label>' +
+      '<div class="field-row">' + amountField('target', 'Montant à atteindre (€)', g ? g.target : 0) + amountField('saved', 'Déjà de côté (€)', g ? g.saved : 0) + '</div>' +
+      '<div class="field-row"><label class="field"><span>' + (isNew ? 'Durée' : 'Temps restant') + '</span><input class="input" name="duration" type="text" inputmode="numeric" autocomplete="off" placeholder="12" value="' + (inYears ? left / 12 : left) + '"></label>' +
+      '<div class="field"><span>&nbsp;</span><div class="segmented" role="radiogroup" aria-label="Unité de durée">' +
+      '<label class="seg-opt"><input type="radio" name="unit" value="month"' + (inYears ? '' : ' checked') + '><span>Mois</span></label>' +
+      '<label class="seg-opt"><input type="radio" name="unit" value="year"' + (inYears ? ' checked' : '') + '><span>Ans</span></label></div></div></div>' +
+      '<p class="pill-info" id="goal-preview" aria-live="polite"></p>';
+    var del = isNew ? '' : '<button type="button" class="btn btn-danger btn-block" data-action="delete-goal" data-id="' + esc(id) + '">Supprimer cet objectif</button>';
+    openSheet(isNew ? 'Nouvel objectif' : 'Modifier l\'objectif', body, isNew ? 'Créer l\'objectif' : 'Enregistrer', function (data) {
+      var r = readGoalForm(data);
+      if (typeof r === 'string') return r;
+      var item = { id: isNew ? uid() : id, name: r.name, target: r.target, saved: r.saved, months: r.months, start: monthKey(today()) };
+      if (isNew) state.goals.push(item);
+      else state.goals = state.goals.map(function (x) { return x.id === id ? item : x; });
+      toast(isNew ? 'Objectif créé' : 'Objectif modifié');
+    }, del);
+    sheetForm.dataset.kind = 'goal';
+    previewGoal();
+  }
+
+  function readGoalForm(data) {
+    var name = (data.name || '').trim();
+    var target = parseAmount(data.target);
+    var saved = (data.saved || '').trim() ? parseAmount(data.saved) : 0;
+    var n = parseInt(String(data.duration || '').trim(), 10);
+    if (!name) return 'Donne un nom à cet objectif.';
+    if (target === null || target <= 0) return 'Indique le montant à atteindre, par exemple 2 000.';
+    if (saved === null) return 'Indique ce que tu as déjà de côté, ou laisse le champ vide.';
+    if (!/^\d+$/.test(String(data.duration || '').trim()) || n < 1) return 'Indique une durée, par exemple 12 mois ou 2 ans.';
+    var months = data.unit === 'year' ? n * 12 : n;
+    if (months > 600) return 'Choisis une durée de 50 ans au plus.';
+    return { name: name, target: target, saved: saved, months: months };
+  }
+
+  // Aperçu en direct du montant mensuel dans la fenêtre de l'objectif.
+  function previewGoal() {
+    var out = document.getElementById('goal-preview');
+    if (!out) return;
+    var data = {};
+    new FormData(sheetForm).forEach(function (v, k) { data[k] = v; });
+    data.name = data.name || '-';
+    var r = readGoalForm(data);
+    if (typeof r === 'string') {
+      out.innerHTML = '<span class="muted">Indique un montant et une durée pour voir combien mettre de côté chaque mois.</span>';
+      return;
+    }
+    var missing = Math.max(0, r.target - r.saved);
+    out.innerHTML = missing > 0
+      ? '<span class="strong">' + euro(Math.ceil(missing / r.months * 100) / 100) + ' par mois</span><span class="muted">pendant ' + durationLabel(r.months) + '</span>'
+      : '<span class="strong">Objectif déjà atteint</span>';
   }
 
   function calcRow(label, value, color) {
@@ -728,6 +857,7 @@
 
   function openSheet(title, body, submitLabel, onSubmit, extra) {
     sheetSubmit = onSubmit;
+    delete sheetForm.dataset.kind;
     sheetForm.innerHTML = '<span class="sheet-handle" aria-hidden="true"></span>' +
       '<div class="sheet-head"><h2 class="heading" id="sheet-title">' + title + '</h2>' +
       '<button type="button" class="icon-btn" aria-label="Fermer" data-action="sheet-close">' + icon('close') + '</button></div>' +
@@ -1385,6 +1515,17 @@
       case 'add-cat': return editCat(null);
       case 'edit-cat': return editCat(id);
       case 'edit-salary': return editSalary();
+      case 'add-goal': return editGoal(null);
+      case 'edit-goal': return editGoal(id);
+      case 'delete-goal':
+        if (!window.confirm('Supprimer cet objectif ?')) return;
+        state.goals = state.goals.filter(function (g) { return g.id !== id; });
+        closeSheet(); save(); render(); toast('Objectif supprimé');
+        return;
+      case 'sv-goals':
+        state.savings = Math.round(goalsMonthly() * 100) / 100;
+        save(); fillSavings(); toast('Épargne mise à jour');
+        return;
       case 'sheet-close': return closeSheet();
       case 'delete-sub':
         if (!window.confirm('Supprimer cet abonnement ?')) return;
@@ -1446,6 +1587,7 @@
 
   document.addEventListener('input', function (e) {
     var el = e.target;
+    if (sheetForm.dataset.kind === 'goal' && sheetForm.contains(el)) return previewGoal();
     switch (el.dataset.input) {
       case 'abos-q':
         ui.abosQuery = el.value;
