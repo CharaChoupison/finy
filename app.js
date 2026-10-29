@@ -657,8 +657,6 @@
       (t.goals > 0 ? calcRow('Objectifs', '− ' + euro(t.goals), 'var(--chart-4)') : '') +
       calcRow(yearlyCount() ? (state.settings.annualMode === 'smooth' ? 'Abonnements (annuels lissés)' : 'Abonnements (ce mois-ci)') : 'Abonnements', '− ' + euro(t.subs), 'var(--chart-2)') +
       '<div class="row" style="min-height:60px"><span class="row-main"><span class="strong">Il te reste</span></span><span class="row-amount" style="font-size:20px;line-height:26px;font-weight:700' + (t.rest < 0 ? ';color:var(--danger)' : '') + '">' + euro(t.rest) + '</span></div>' +
-      (t.cats > 0 ? calcRow('Catégories', '− ' + euro(t.cats), 'var(--chart-3)') +
-        '<div class="row"><span class="row-main"><span class="strong">Libre</span></span><span class="row-amount"' + (t.free < 0 ? ' style="color:var(--danger)"' : '') + '>' + euro(t.free) + '</span></div>' : '') +
       '<div class="row"><span class="row-main"><span class="muted">Pour te faire plaisir chaque semaine</span></span><span class="row-amount">' + euro(t.weekly) + '</span></div>';
     document.getElementById('sv-alert').hidden = !(state.salary > 0 && t.rest < 0);
     fillGoals();
