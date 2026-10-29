@@ -1,5 +1,6 @@
 /* Finy — service worker : garde l'app disponible hors ligne. */
-var CACHE = 'finy-v1';
+var CACHE = 'finy-v2';
+var LOGOS = 'finy-logos';
 var SHELL = [
   './',
   'index.html',
@@ -18,7 +19,7 @@ self.addEventListener('install', function (e) {
 
 self.addEventListener('activate', function (e) {
   e.waitUntil(caches.keys().then(function (keys) {
-    return Promise.all(keys.filter(function (k) { return k !== CACHE; }).map(function (k) { return caches.delete(k); }));
+    return Promise.all(keys.filter(function (k) { return k !== CACHE && k !== LOGOS; }).map(function (k) { return caches.delete(k); }));
   }).then(function () { return self.clients.claim(); }));
 });
 
@@ -26,6 +27,20 @@ self.addEventListener('activate', function (e) {
 // cache en secours quand il n'y a pas de connexion.
 self.addEventListener('fetch', function (e) {
   if (e.request.method !== 'GET') return;
+
+  // Logos des abonnements : demandés une seule fois à DuckDuckGo, puis gardés sur l'appareil.
+  if (new URL(e.request.url).hostname === 'icons.duckduckgo.com') {
+    e.respondWith(caches.open(LOGOS).then(function (c) {
+      return c.match(e.request).then(function (hit) {
+        return hit || fetch(e.request).then(function (res) {
+          if (res.ok || res.type === 'opaque') c.put(e.request, res.clone());
+          return res;
+        });
+      });
+    }));
+    return;
+  }
+
   e.respondWith(
     fetch(e.request).then(function (res) {
       if (res.ok && (new URL(e.request.url).origin === location.origin || e.request.url.indexOf('fonts.g') >= 0)) {

@@ -57,7 +57,7 @@
     if (!data || typeof data !== 'object') return out;
     var num = function (v, d) { return typeof v === 'number' && isFinite(v) ? v : d; };
     out.profile.name = typeof (data.profile || {}).name === 'string' ? data.profile.name.slice(0, 40) : '';
-    out.profile.photo = typeof (data.profile || {}).photo === 'string' && data.profile.photo.indexOf('data:image/') === 0 ? data.profile.photo : null;
+    out.profile.photo = isImageData((data.profile || {}).photo) ? data.profile.photo : null;
     out.salary = Math.max(0, num(data.salary, 0));
     out.savings = Math.max(0, num(data.savings, 0));
     out.categories = Array.isArray(data.categories) ? data.categories.filter(function (c) {
@@ -73,7 +73,9 @@
         name: s.name.slice(0, 60),
         amount: Math.max(0, s.amount),
         day: Math.min(31, Math.max(1, Math.round(num(s.day, 1)))),
-        category: typeof s.category === 'string' && s.category ? s.category.slice(0, 30) : 'Autre'
+        category: typeof s.category === 'string' && s.category ? s.category.slice(0, 30) : 'Autre',
+        site: typeof s.site === 'string' ? (normalizeSite(s.site) || '') : '',
+        image: isImageData(s.image) ? s.image : null
       };
     }) : [];
     var st = data.settings || {};
@@ -103,6 +105,23 @@
     } catch (e) {
       toast("Impossible d'enregistrer sur cet appareil");
     }
+  }
+
+  // Seules les images recadrées par Finy (JPEG ou PNG en base64) sont acceptées.
+  function isImageData(v) {
+    return typeof v === 'string' && /^data:image\/(jpeg|png);base64,[A-Za-z0-9+/=]+$/.test(v) && v.length < 200000;
+  }
+
+  // « https://www.Netflix.com/fr » → « netflix.com ». Renvoie null si ce n'est pas un nom de site.
+  function normalizeSite(input) {
+    var s = String(input || '').trim().toLowerCase()
+      .replace(/^[a-z]+:\/\//, '').replace(/^www\./, '').split(/[/?#:]/)[0];
+    return /^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(s) && s.length <= 100 ? s : null;
+  }
+
+  // Icône du site via DuckDuckGo : seul le nom du site est envoyé.
+  function logoUrl(site) {
+    return 'https://icons.duckduckgo.com/ip3/' + encodeURIComponent(site) + '.ico';
   }
 
   function uid() {
@@ -206,9 +225,18 @@
     var s = u.sub;
     var extra = (showCategory ? esc(s.category) + ' · ' : '') + shortDate.format(u.date);
     return '<button type="button" class="row tall" data-action="edit-sub" data-id="' + esc(s.id) + '">' +
-      '<span class="tile" aria-hidden="true">' + initial(s.name) + '</span>' +
+      subTile(s) +
       '<span class="row-main"><span class="row-title">' + esc(s.name) + '</span>' + metaLine(u.diff, extra) + '</span>' +
       '<span class="row-amount">' + euro(s.amount) + '</span></button>';
+  }
+
+  // Priorité : image choisie, puis logo du site, puis initiale.
+  function subTile(s, extraClass) {
+    var cls = 'tile' + (extraClass ? ' ' + extraClass : '');
+    var letter = initial(s.name || '?');
+    if (s.image) return '<span class="' + cls + ' tile-photo" aria-hidden="true"><img src="' + esc(s.image) + '" alt=""></span>';
+    if (s.site) return '<span class="' + cls + ' tile-logo" aria-hidden="true" data-initial="' + letter + '"><img src="' + esc(logoUrl(s.site)) + '" alt="" referrerpolicy="no-referrer" loading="lazy"></span>';
+    return '<span class="' + cls + '" aria-hidden="true">' + letter + '</span>';
   }
 
   function splitBar(parts, label) {
@@ -398,7 +426,7 @@
       var d = diffDays(new Date(y, m, sel), t);
       html += items.map(function (s) {
         var soon = d >= 0 && d <= state.settings.alertDays;
-        return '<button type="button" class="row tall" data-action="edit-sub" data-id="' + esc(s.id) + '"><span class="tile" aria-hidden="true">' + initial(s.name) + '</span>' +
+        return '<button type="button" class="row tall" data-action="edit-sub" data-id="' + esc(s.id) + '">' + subTile(s) +
           '<span class="row-main"><span class="row-title">' + esc(s.name) + '</span><span class="row-meta"><span class="' + (soon ? 'soon' : '') + '">' + relative(d) + '</span></span></span>' +
           '<span class="row-amount">' + euro(s.amount) + '</span></button>';
       }).join('');
@@ -564,6 +592,16 @@
   var sheet = document.getElementById('sheet');
   var sheetForm = document.getElementById('sheet-form');
   var sheetSubmit = null;
+  var sheetDraft = { name: '', site: '', image: null };
+
+  // Logo introuvable (site inconnu, hors ligne) : on revient à l'initiale.
+  document.addEventListener('error', function (e) {
+    var img = e.target;
+    if (img.tagName !== 'IMG' || !img.parentNode || !img.parentNode.classList.contains('tile-logo')) return;
+    var tile = img.parentNode;
+    tile.classList.remove('tile-logo');
+    tile.textContent = tile.dataset.initial || '?';
+  }, true);
 
   function openSheet(title, body, submitLabel, onSubmit, extra) {
     sheetSubmit = onSubmit;
@@ -621,24 +659,35 @@
   function editSub(id) {
     var s = state.subs.filter(function (x) { return x.id === id; })[0];
     var isNew = !s;
-    s = s || { name: '', amount: 0, day: today().getDate(), category: 'Streaming' };
+    s = s || { name: '', amount: 0, day: today().getDate(), category: 'Streaming', site: '', image: null };
+    sheetDraft = { name: s.name, site: s.site || '', image: s.image || null };
     var cats = SUB_CATEGORIES.slice();
     if (cats.indexOf(s.category) < 0) cats.push(s.category);
     var days = '';
     for (var d = 1; d <= 31; d++) days += '<option value="' + d + '"' + (d === s.day ? ' selected' : '') + '>' + d + '</option>';
-    var body = '<label class="field"><span>Nom</span><input class="input" name="name" type="text" maxlength="60" autocomplete="off" placeholder="Netflix, Orange…" value="' + esc(s.name) + '"></label>' +
+    var body = '<div class="image-pick"><span id="draft-tile">' + subTile(sheetDraft, 'tile-lg') + '</span>' +
+      '<div class="image-pick-actions"><label class="link-btn" style="display:inline-flex;align-items:center;cursor:pointer">Choisir une image<input type="file" accept="image/*" class="sr-only" data-input="sub-image"></label>' +
+      '<button type="button" class="link-btn" data-action="sub-image-remove" style="color:var(--muted)"' + (s.image ? '' : ' hidden') + '>Retirer l\'image</button></div></div>' +
+      '<label class="field"><span>Nom</span><input class="input" name="name" type="text" maxlength="60" autocomplete="off" placeholder="Netflix, Orange…" value="' + esc(s.name) + '" data-input="sub-name"></label>' +
       '<div class="field-row">' + amountField('amount', 'Montant par mois (€)', s.amount) +
       '<label class="field"><span>Jour du prélèvement</span><select class="input" name="day">' + days + '</select></label></div>' +
       '<label class="field"><span>Catégorie</span><select class="input" name="category">' + cats.map(function (c) {
         return '<option' + (c === s.category ? ' selected' : '') + '>' + esc(c) + '</option>';
-      }).join('') + '</select></label>';
+      }).join('') + '</select></label>' +
+      '<label class="field"><span>Site du service (facultatif)</span><input class="input" name="site" type="text" inputmode="url" autocapitalize="off" autocorrect="off" spellcheck="false" autocomplete="off" placeholder="netflix.com" value="' + esc(s.site || '') + '" data-input="sub-site">' +
+      '<span class="caption">Pour afficher son logo automatiquement. Seul le nom du site est envoyé à DuckDuckGo pour récupérer l\'icône.</span></label>';
     var del = isNew ? '' : '<button type="button" class="btn btn-danger btn-block" data-action="delete-sub" data-id="' + esc(id) + '">Supprimer cet abonnement</button>';
     openSheet(isNew ? 'Nouvel abonnement' : 'Modifier l\'abonnement', body, isNew ? 'Ajouter' : 'Enregistrer', function (data) {
       var name = (data.name || '').trim();
       var amount = parseAmount(data.amount);
       if (!name) return 'Donne un nom à cet abonnement.';
       if (amount === null || amount <= 0) return 'Indique un montant, par exemple 9,99.';
-      var item = { id: isNew ? uid() : id, name: name, amount: amount, day: parseInt(data.day, 10) || 1, category: data.category || 'Autre' };
+      var site = '';
+      if ((data.site || '').trim()) {
+        site = normalizeSite(data.site);
+        if (!site) return 'Indique un site comme netflix.com, ou laisse le champ vide.';
+      }
+      var item = { id: isNew ? uid() : id, name: name, amount: amount, day: parseInt(data.day, 10) || 1, category: data.category || 'Autre', site: site, image: sheetDraft.image };
       if (isNew) state.subs.push(item);
       else state.subs = state.subs.map(function (x) { return x.id === id ? item : x; });
       toast(isNew ? 'Abonnement ajouté' : 'Abonnement modifié');
@@ -755,21 +804,38 @@
     reader.readAsText(file);
   }
 
-  function setPhoto(file) {
+  // Recadre au carré et redessine l'image : le fichier d'origine (et ses métadonnées) n'est jamais gardé.
+  function squareImage(file, size, done) {
+    if (!file || !/^image\//.test(file.type)) return toast('Choisis une image');
     var url = URL.createObjectURL(file);
     var img = new Image();
     img.onload = function () {
-      var size = 256;
       var canvas = document.createElement('canvas');
       canvas.width = canvas.height = size;
+      var ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#FFFFFF';
+      ctx.fillRect(0, 0, size, size);
       var side = Math.min(img.width, img.height);
-      canvas.getContext('2d').drawImage(img, (img.width - side) / 2, (img.height - side) / 2, side, side, 0, 0, size, size);
+      ctx.drawImage(img, (img.width - side) / 2, (img.height - side) / 2, side, side, 0, 0, size, size);
       URL.revokeObjectURL(url);
-      state.profile.photo = canvas.toDataURL('image/jpeg', 0.85);
-      save(); render();
+      done(canvas.toDataURL('image/jpeg', 0.85));
     };
     img.onerror = function () { URL.revokeObjectURL(url); toast("Impossible de lire cette image"); };
     img.src = url;
+  }
+
+  function setPhoto(file) {
+    squareImage(file, 256, function (data) {
+      state.profile.photo = data;
+      save(); render();
+    });
+  }
+
+  function refreshDraftTile() {
+    var holder = document.getElementById('draft-tile');
+    if (holder) holder.innerHTML = subTile(sheetDraft, 'tile-lg');
+    var rm = sheetForm.querySelector('[data-action="sub-image-remove"]');
+    if (rm) rm.hidden = !sheetDraft.image;
   }
 
   // ---------- Message ----------
@@ -843,6 +909,9 @@
         if (!('Notification' in window) || Notification.permission !== 'granted') return toast('Autorise d\'abord les notifications');
         notify('Finy', 'Les rappels fonctionnent. Finy te préviendra avant tes prélèvements.', 'finy-test');
         return;
+      case 'sub-image-remove':
+        sheetDraft.image = null;
+        return refreshDraftTile();
       case 'remove-photo':
         state.profile.photo = null;
         save(); return render();
@@ -862,6 +931,12 @@
         state.savings = n === null ? 0 : n;
         save();
         return fillSavings(true);
+      case 'sub-name':
+        sheetDraft.name = el.value;
+        return refreshDraftTile();
+      case 'sub-site':
+        sheetDraft.site = normalizeSite(el.value) || '';
+        return refreshDraftTile();
       case 'name':
         state.profile.name = el.value.slice(0, 40);
         save();
@@ -875,6 +950,10 @@
     var el = e.target;
     if (el.dataset.input === 'sv-input') fillSavings();
     if (el.dataset.input === 'photo' && el.files && el.files[0]) setPhoto(el.files[0]);
+    if (el.dataset.input === 'sub-image' && el.files && el.files[0]) {
+      squareImage(el.files[0], 160, function (data) { sheetDraft.image = data; refreshDraftTile(); });
+      el.value = '';
+    }
     if (el.dataset.input === 'import' && el.files && el.files[0]) { importData(el.files[0]); el.value = ''; }
   });
 
