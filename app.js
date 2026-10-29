@@ -45,6 +45,7 @@
       settings: {
         theme: 'system',
         homeCount: 3,
+        annualMode: 'actual',
         alertDays: 5,
         reminders: { enabled: false, daysBefore: 3, sameDay: true }
       },
@@ -83,6 +84,7 @@
     var st = data.settings || {};
     out.settings.theme = ['system', 'light', 'dark'].indexOf(st.theme) >= 0 ? st.theme : 'system';
     out.settings.homeCount = st.homeCount === 5 ? 5 : 3;
+    out.settings.annualMode = st.annualMode === 'smooth' ? 'smooth' : 'actual';
     out.settings.alertDays = Math.min(30, Math.max(1, Math.round(num(st.alertDays, 5))));
     var r = st.reminders || {};
     out.settings.reminders.enabled = r.enabled === true;
@@ -198,6 +200,24 @@
   // Coût ramené au mois : un abonnement annuel compte pour 1/12 chaque mois.
   function monthlyCost(s) { return s.frequency === 'year' ? s.amount / 12 : s.amount; }
 
+  // Coût compté pour le mois en cours, selon le réglage :
+  // « actual » = ce qui est vraiment prélevé ce mois-ci, « smooth » = annuels lissés sur 12 mois.
+  function costThisMonth(s) {
+    if (s.frequency !== 'year') return s.amount;
+    if (state.settings.annualMode === 'smooth') return s.amount / 12;
+    return s.month === today().getMonth() ? s.amount : 0;
+  }
+
+  function yearTotal() {
+    return state.subs.reduce(function (a, s) { return a + (s.frequency === 'year' ? s.amount : s.amount * 12); }, 0);
+  }
+
+  // Prochain abonnement annuel qui ne tombe pas ce mois-ci (pour prévenir à l'avance).
+  function nextYearly() {
+    var t = today();
+    return upcoming().filter(function (u) { return u.sub.frequency === 'year' && u.date.getMonth() !== t.getMonth(); })[0] || null;
+  }
+
   function priceLabel(s) {
     return euro(s.amount) + (s.frequency === 'year' ? '<small class="per">/an</small>' : '');
   }
@@ -216,7 +236,7 @@
   // ---------- Calculs ----------
 
   function totals() {
-    var subs = state.subs.reduce(function (a, s) { return a + monthlyCost(s); }, 0);
+    var subs = state.subs.reduce(function (a, s) { return a + costThisMonth(s); }, 0);
     var cats = state.categories.reduce(function (a, c) { return a + c.amount; }, 0);
     var rest = state.salary - state.savings - subs;
     return { subs: subs, cats: cats, rest: rest, free: rest - cats, weekly: Math.max(0, rest) / WEEKS_PER_MONTH };
@@ -246,7 +266,7 @@
   function subRow(u, showCategory) {
     var s = u.sub;
     var extra = (showCategory ? esc(s.category) + ' · ' : '') + shortDate.format(u.date) +
-      (s.frequency === 'year' ? ' · ≈ ' + euro(s.amount / 12) + '/mois' : '');
+      (s.frequency === 'year' && state.settings.annualMode === 'smooth' ? ' · ≈ ' + euro(s.amount / 12) + '/mois' : '');
     return '<button type="button" class="row tall" data-action="edit-sub" data-id="' + esc(s.id) + '">' +
       subTile(s) +
       '<span class="row-main"><span class="row-title">' + esc(s.name) + '</span>' + metaLine(u.diff, extra) + '</span>' +
@@ -347,9 +367,21 @@
     var html = '<header class="topbar a-top"><h1 class="title">Abonnements</h1>' +
       '<button type="button" class="btn btn-primary" data-action="add-sub">' + icon('plus') + 'Ajouter</button></header>';
 
-    html += '<section class="hero a-hero" aria-label="Total"><p class="amount-big">' + euro(t.subs) + '<small>/mois</small></p>' +
-      '<p class="label" style="font-weight:400">' + euro(t.subs * 12) + ' sur un an · ' + state.subs.length + ' abonnement' + (state.subs.length > 1 ? 's' : '') +
-      (yearlyCount() ? ', dont ' + yearlyCount() + ' annuel' + (yearlyCount() > 1 ? 's' : '') + ' compté' + (yearlyCount() > 1 ? 's' : '') + ' au mois' : '') + '</p></section>';
+    var smooth = state.settings.annualMode === 'smooth';
+    var yc = yearlyCount();
+    var smoothPart = state.subs.filter(function (s) { return s.frequency === 'year'; }).reduce(function (a, s) { return a + s.amount / 12; }, 0);
+    var monthWord = new Intl.DateTimeFormat('fr-FR', { month: 'long' }).format(today());
+    html += '<section class="hero a-hero" aria-label="Total">' +
+      (yc ? '<p class="label">' + (smooth ? 'Par mois, annuels lissés' : 'Prélevé en ' + monthWord) + '</p>' : '') +
+      '<p class="amount-big">' + euro(t.subs) + '<small>/mois</small></p>' +
+      '<p class="label" style="font-weight:400">' + euro(yearTotal()) + ' sur un an · ' + state.subs.length + ' abonnement' + (state.subs.length > 1 ? 's' : '') +
+      (yc && smooth ? ', dont ' + euro(smoothPart) + ' pour ' + yc + ' annuel' + (yc > 1 ? 's' : '') : '') + '</p>';
+    if (yc) {
+      var nx = nextYearly();
+      html += segmented('annualMode', [['actual', 'Ce mois-ci'], ['smooth', 'Lissé']], state.settings.annualMode, 'Compter les abonnements annuels', true) +
+        (!smooth && nx ? '<p class="pill-info"><span class="soon-dot" aria-hidden="true" style="background:var(--accent)"></span><span>' + esc(nx.sub.name) + ' : <span class="strong">' + euro(nx.sub.amount) + '</span> à prévoir en ' + new Intl.DateTimeFormat('fr-FR', { month: 'long' }).format(nx.date) + '</span></p>' : '');
+    }
+    html += '</section>';
 
     if (!state.subs.length) {
       return html + '<div class="group a-main"><div class="empty"><span>Aucun abonnement pour l\'instant.</span><span class="caption">Ajoute tes paiements récurrents pour voir où part ton argent.</span></div></div>';
@@ -367,7 +399,8 @@
       }).join('') + '</div></div>';
 
     var byCat = {};
-    state.subs.forEach(function (s) { byCat[s.category] = (byCat[s.category] || 0) + monthlyCost(s); });
+    state.subs.forEach(function (s) { byCat[s.category] = (byCat[s.category] || 0) + costThisMonth(s); });
+    Object.keys(byCat).forEach(function (k) { if (byCat[k] <= 0) delete byCat[k]; });
     var cats = Object.keys(byCat).map(function (k) { return { name: k, value: byCat[k] }; }).sort(function (a, b) { return b.value - a.value; });
     var shown = cats.slice(0, 4).map(function (c, i) { return { name: c.name, value: c.value, color: SUB_PALETTE[i] }; });
     if (cats.length > 4) {
@@ -501,7 +534,7 @@
     document.getElementById('sv-calc').innerHTML =
       calcRow('Salaire', euro(state.salary), 'var(--ink)') +
       calcRow('Épargne', '− ' + euro(state.savings), 'var(--accent)') +
-      calcRow(yearlyCount() ? 'Abonnements (annuels au mois)' : 'Abonnements', '− ' + euro(t.subs), 'var(--chart-2)') +
+      calcRow(yearlyCount() ? (state.settings.annualMode === 'smooth' ? 'Abonnements (annuels lissés)' : 'Abonnements (ce mois-ci)') : 'Abonnements', '− ' + euro(t.subs), 'var(--chart-2)') +
       '<div class="row" style="min-height:60px"><span class="row-main"><span class="strong">Il te reste</span></span><span class="row-amount" style="font-size:20px;line-height:26px;font-weight:700' + (t.rest < 0 ? ';color:var(--danger)' : '') + '">' + euro(t.rest) + '</span></div>' +
       '<div class="row"><span class="row-main"><span class="muted">Pour te faire plaisir chaque semaine</span></span><span class="row-amount">' + euro(t.weekly) + '</span></div>';
     document.getElementById('sv-alert').hidden = !(state.salary > 0 && t.rest < 0);
@@ -528,6 +561,8 @@
       segmented('theme', [['system', 'Système'], ['light', 'Clair'], ['dark', 'Sombre']], s.theme, 'Thème', false) + '</section>';
 
     html += '<section class="section" style="gap:12px"><h2 class="heading">Accueil</h2><div class="group">' +
+      '<div class="row" style="min-height:64px"><span class="row-main"><span>Abonnements annuels</span><span class="caption">' + (state.settings.annualMode === 'smooth' ? 'Comptés 1/12 chaque mois' : 'Comptés le mois où ils sont prélevés') + '</span></span>' +
+      segmented('annualMode', [['actual', 'Ce mois-ci'], ['smooth', 'Lissé']], state.settings.annualMode, 'Compter les abonnements annuels', true) + '</div>' +
       '<div class="row" style="min-height:64px"><span class="row-main"><span>Prélèvements affichés</span><span class="caption">Dans « À venir »</span></span>' +
       segmented('homeCount', [[3, '3'], [5, '5']], s.homeCount, 'Nombre de prélèvements affichés', true) + '</div>' +
       '<div class="row" style="min-height:64px"><span class="row-main"><span style="display:flex;align-items:center;gap:8px"><span class="soon-dot" aria-hidden="true"></span>Pastille orange</span><span class="caption">Jours avant le prélèvement</span></span>' +
@@ -936,6 +971,7 @@
       case 'set':
         if (el.dataset.key === 'theme') { state.settings.theme = v; applyTheme(); }
         if (el.dataset.key === 'homeCount') state.settings.homeCount = parseInt(v, 10);
+        if (el.dataset.key === 'annualMode') state.settings.annualMode = v === 'smooth' ? 'smooth' : 'actual';
         save(); return render();
       case 'step':
         var key = el.dataset.key;
