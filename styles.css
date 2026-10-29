@@ -398,6 +398,7 @@ select.input { background-image: linear-gradient(45deg, transparent 50%, var(--m
 }
 .tabbar a { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; color: var(--muted); font-size: 11px; line-height: 14px; font-weight: 600; }
 .tabbar a[aria-current="page"] { color: var(--accent); }
+.tabbar .tab-logo, .tabbar .tab-desktop { display: none; }
 
 /* ---------- Feuille (bas de l'écran) ---------- */
 
@@ -447,3 +448,113 @@ select.input { background-image: linear-gradient(45deg, transparent 50%, var(--m
   transition: opacity .2s, transform .2s;
 }
 .toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+/* ---------- Survol (souris) ---------- */
+
+@media (hover: hover) {
+  button.row:hover .row-title, a.row:hover .row-title, button.row-link:hover { color: var(--accent); }
+  .btn:hover, .chip:hover, .icon-btn:hover, .action:hover span:first-child, .day:hover { filter: brightness(.94); }
+  :root[data-theme="dark"] .btn:hover, :root[data-theme="dark"] .chip:hover, :root[data-theme="dark"] .icon-btn:hover,
+  :root[data-theme="dark"] .action:hover span:first-child, :root[data-theme="dark"] .day:hover { filter: brightness(1.25); }
+  .link-btn:hover, .back:hover { text-decoration: underline; }
+}
+@media (hover: hover) and (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .btn:hover, :root:not([data-theme="light"]) .chip:hover, :root:not([data-theme="light"]) .icon-btn:hover,
+  :root:not([data-theme="light"]) .action:hover span:first-child, :root:not([data-theme="light"]) .day:hover { filter: brightness(1.25); }
+}
+
+/* ---------- Ordinateur ---------- */
+
+@media (min-width: 960px) {
+  :root { --sidebar-w: 240px; }
+
+  /* La barre d'onglets devient un menu fixe à gauche */
+  .tabbar {
+    top: 0;
+    right: auto;
+    width: var(--sidebar-w);
+    height: auto;
+    padding: 28px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    border-top: 0;
+    border-right: 1px solid var(--border);
+    background: var(--bg);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+  .tabbar .tab-logo { display: flex; align-items: center; gap: 10px; padding: 0 12px 28px; font-size: 26px; line-height: 28px; font-weight: 700; letter-spacing: -0.04em; color: var(--ink); }
+  .tabbar .tab-logo svg { width: 26px; height: 26px; stroke: none; }
+  .tabbar a { flex-direction: row; justify-content: flex-start; gap: 12px; min-height: 44px; padding: 0 12px; border-radius: var(--radius-md); font-size: 15px; line-height: 20px; font-weight: 500; }
+  .tabbar a[aria-current="page"] { background: var(--surface); color: var(--ink); font-weight: 600; }
+  .tabbar a[aria-current="page"] svg { color: var(--accent); }
+  .tabbar .tab-desktop { display: flex; margin-top: auto; }
+
+  .view {
+    max-width: 1120px;
+    margin: 0 0 0 var(--sidebar-w);
+    padding: 40px 48px 64px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    column-gap: 48px;
+    row-gap: var(--space-8);
+    align-items: start;
+  }
+  @media (min-width: 1408px) {
+    .view { margin-left: calc(var(--sidebar-w) + (100vw - var(--sidebar-w) - 1120px) / 2); }
+  }
+
+  .a-top { grid-area: top; }
+  .a-hero { grid-area: hero; }
+  .a-actions { grid-area: actions; }
+  .a-main { grid-area: main; }
+  .a-side { grid-area: side; }
+
+  /* Accueil : le montant et les actions en haut, répartition et prochains prélèvements côte à côte */
+  .view[data-route="accueil"] {
+    grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+    grid-template-areas: "hero actions" "main side";
+  }
+  .view[data-route="accueil"] .a-top { display: none; }
+  .view[data-route="accueil"] .a-actions { align-self: end; margin: 0; }
+
+  /* Abonnements : filtres en haut, catégories à gauche, liste à droite */
+  .view[data-route="abonnements"] {
+    grid-template-columns: minmax(260px, 1fr) minmax(0, 1.6fr);
+    grid-template-areas: "top top" "hero hero" "actions actions" "side main";
+  }
+  .view[data-route="abonnements"] .a-side { position: sticky; top: 40px; }
+  .view[data-route="abonnements"] .legend { grid-template-columns: minmax(0, 1fr); }
+  .view[data-route="abonnements"] .search { max-width: 420px; }
+  .view[data-route="abonnements"] .chips { margin: 0; padding: 0; flex-wrap: wrap; overflow: visible; }
+
+  /* Calendrier : le mois à gauche, le jour choisi à droite */
+  .view[data-route="calendrier"] {
+    grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+    grid-template-areas: "top top" "main side";
+  }
+  .view[data-route="calendrier"] .a-side { position: sticky; top: 40px; }
+  .view[data-route="calendrier"] .day { height: 64px; font-size: 16px; }
+
+  /* Épargne : réglage à gauche, calcul à droite */
+  .view[data-route="epargne"] {
+    grid-template-areas: "top top" "hero side" "main side";
+  }
+
+  /* Réglages : une colonne de lecture */
+  .view[data-route="reglages"] { display: flex; align-items: stretch; max-width: 720px; }
+  .view[data-route="reglages"] .back { display: none; }
+
+  /* Fenêtres : centrées au lieu de monter du bas */
+  .sheet {
+    max-width: 480px;
+    max-height: 85vh;
+    margin: auto;
+    border-radius: var(--radius-lg);
+  }
+  .sheet-handle { display: none; }
+  .sheet-body { padding: var(--space-6); }
+
+  .toast { left: calc(50% + var(--sidebar-w) / 2); bottom: 32px; }
+}

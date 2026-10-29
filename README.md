@@ -31,6 +31,12 @@ Ton code est visible par tout le monde, mais pas tes données : elles restent su
 
 Pour les rappels, va dans **Réglages › Rappels**, active-les et accepte l'autorisation. Ils sont vérifiés à chaque ouverture de Finy.
 
+## L'utiliser sur ordinateur
+
+Ouvre la même adresse dans ton navigateur. À partir de 960 px de large, Finy passe en mise en page ordinateur : un menu fixe à gauche (avec Réglages en bas), des écrans sur deux colonnes, et des fenêtres centrées. Dans Chrome ou Edge, tu peux aussi l'installer comme une app avec l'icône d'installation dans la barre d'adresse.
+
+Les données ne sont pas partagées entre le téléphone et l'ordinateur : chaque appareil garde les siennes. Pour passer de l'un à l'autre, utilise **Exporter** puis **Importer une sauvegarde**.
+
 ## Mettre à jour
 
 Remplace les fichiers modifiés dans le dépôt GitHub (**Add file › Upload files**). Si tu modifies `app.js` ou `styles.css`, change aussi `finy-v1` en `finy-v2` (puis `v3`…) au début de `sw.js`, pour que les téléphones récupèrent bien la nouvelle version. Si l'ancienne version s'affiche encore, ferme Finy complètement et rouvre-la, ou utilise **Réglages › Recharger Finy**.
