@@ -5,7 +5,6 @@
   // ---------- Constantes ----------
 
   var STORE_KEY = 'finy:v1';
-  var WEEKS_PER_MONTH = 52 / 12;
   var SUB_CATEGORIES = ['Streaming', 'Logiciels', 'Téléphonie', 'Sport', 'Jeux', 'Transport', 'Maison', 'Autre'];
   var CAT_PALETTE = ['var(--chart-3)', 'var(--chart-4)', 'var(--ink)', 'var(--muted)'];
   var SUB_PALETTE = ['var(--accent)', 'var(--chart-3)', 'var(--chart-4)', 'var(--ink)'];
@@ -281,7 +280,10 @@
     var cats = state.categories.reduce(function (a, c) { return a + c.amount; }, 0);
     var goals = goalsMonthly();
     var rest = state.salary - state.savings - goals - subs;
-    return { subs: subs, cats: cats, goals: goals, rest: rest, free: rest - cats, weekly: Math.max(0, rest) / WEEKS_PER_MONTH };
+    var free = rest - cats;
+    // Ce qui est vraiment libre (catégories déjà réservées), réparti sur les jours du mois en cours.
+    var t = today();
+    return { subs: subs, cats: cats, goals: goals, rest: rest, free: free, weekly: Math.max(0, free) * 7 / daysIn(t.getFullYear(), t.getMonth()) };
   }
 
   function yearlyCount() {
@@ -655,6 +657,8 @@
       (t.goals > 0 ? calcRow('Objectifs', '− ' + euro(t.goals), 'var(--chart-4)') : '') +
       calcRow(yearlyCount() ? (state.settings.annualMode === 'smooth' ? 'Abonnements (annuels lissés)' : 'Abonnements (ce mois-ci)') : 'Abonnements', '− ' + euro(t.subs), 'var(--chart-2)') +
       '<div class="row" style="min-height:60px"><span class="row-main"><span class="strong">Il te reste</span></span><span class="row-amount" style="font-size:20px;line-height:26px;font-weight:700' + (t.rest < 0 ? ';color:var(--danger)' : '') + '">' + euro(t.rest) + '</span></div>' +
+      (t.cats > 0 ? calcRow('Catégories', '− ' + euro(t.cats), 'var(--chart-3)') +
+        '<div class="row"><span class="row-main"><span class="strong">Libre</span></span><span class="row-amount"' + (t.free < 0 ? ' style="color:var(--danger)"' : '') + '>' + euro(t.free) + '</span></div>' : '') +
       '<div class="row"><span class="row-main"><span class="muted">Pour te faire plaisir chaque semaine</span></span><span class="row-amount">' + euro(t.weekly) + '</span></div>';
     document.getElementById('sv-alert').hidden = !(state.salary > 0 && t.rest < 0);
     fillGoals();
