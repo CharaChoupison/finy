@@ -430,6 +430,7 @@
         '<span class="label">Salaire ' + euro(state.salary) + '</span></div>' + splitBar(bar, aria) + '<div class="group">' +
         parts.map(function (p) {
           var inner = '<span class="dot" style="--c:' + p.color + '" aria-hidden="true"></span><span class="row-main"><span class="row-title">' + esc(p.name) + '</span></span><span class="row-amount">' + euro(p.value) + '</span>';
+          if (p.href === '#/epargne') return '<a class="row" href="' + p.href + '">' + inner + '</a>' + goalRows();
           return p.href
             ? '<a class="row" href="' + p.href + '">' + inner + '</a>'
             : '<button type="button" class="row" data-action="edit-cat" data-id="' + esc(p.id) + '">' + inner + '</button>';
@@ -438,6 +439,7 @@
         '<span class="row-amount"' + (t.free < 0 ? ' style="color:var(--danger)"' : '') + '>' + euro(t.free) + '</span></div>' +
         '<button type="button" class="row row-link" data-action="add-cat">' + icon('plus') + 'Ajouter une catégorie</button></div>' +
         (t.rest < 0 ? '<p class="alert">Tes dépenses fixes dépassent ton salaire. Baisse ton épargne ou retire un abonnement.</p>' : '') +
+        (goalsMonthly() - state.savings > 0.005 ? '<p class="alert">Tes objectifs demandent ' + euro(goalsMonthly()) + ' par mois, plus que ton épargne. <a href="#/epargne" style="text-decoration:underline">Ajuster</a></p>' : '') +
         '</section>';
     }
 
@@ -447,6 +449,16 @@
         : '<div class="empty"><span>Aucun abonnement pour l\'instant.</span><button type="button" class="link-btn" data-action="add-sub">Ajouter mon premier abonnement</button></div>') +
       '</div></section>';
     return html;
+  }
+
+  // Objectifs en cours, affichés comme une partie de l'épargne (ils n'entrent pas dans le calcul de Libre).
+  function goalRows() {
+    return state.goals.map(function (g) {
+      var p = goalPlan(g);
+      if (p.missing <= 0) return '';
+      return '<a class="row row-sub" href="#/epargne"><span class="row-main"><span class="row-title">' + esc(g.name) + '</span></span>' +
+        '<span class="row-amount">' + euro(p.monthly) + '</span></a>';
+    }).join('');
   }
 
   function action(name, ic, label) {

@@ -285,6 +285,9 @@ svg { width: 24px; height: 24px; flex: none; fill: none; stroke: currentColor; s
 .row-meta > span:last-child { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .row-amount { font-weight: 600; white-space: nowrap; }
 .row-link { color: var(--accent); font-weight: 500; }
+.row-sub { min-height: 40px; padding-left: 22px; font-size: 14px; color: var(--muted); }
+.row-sub .row-title::before { content: "↳ "; }
+.row-sub .row-amount { font-weight: 500; }
 .row svg.chev { width: 18px; height: 18px; stroke: var(--muted); stroke-width: 2; }
 
 .dot { width: 10px; height: 10px; flex: none; border-radius: var(--radius-full); background: var(--c, var(--muted)); }
