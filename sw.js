@@ -1,5 +1,5 @@
 /* Finy — service worker : garde l'app disponible hors ligne. */
-var CACHE = 'finy-v9';
+var CACHE = 'finy-v10';
 var LOGOS = 'finy-logos';
 var SHELL = [
   './',
@@ -10,7 +10,9 @@ var SHELL = [
   'icons/icon.svg',
   'icons/icon-192.png',
   'icons/icon-512.png',
-  'icons/apple-touch-icon.png'
+  'icons/apple-touch-icon.png',
+  'vendor/pdfjs/pdf.min.js',
+  'vendor/pdfjs/pdf.worker.min.js'
 ];
 
 self.addEventListener('install', function (e) {
