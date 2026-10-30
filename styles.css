@@ -16,6 +16,7 @@
   --chart-2: #A1A1AA;
   --chart-3: #0284C7;
   --chart-4: #C026D3;
+  --chart-5: #65A30D;
   --switch-off: #C7C7CE;
   --scrim: rgba(0, 0, 0, .35);
 
@@ -56,6 +57,7 @@
     --chart-2: #5A5A63;
     --chart-3: #38BDF8;
     --chart-4: #E879F9;
+    --chart-5: #84CC16;
     --switch-off: #3A3A40;
     --scrim: rgba(0, 0, 0, .6);
     color-scheme: dark;
@@ -78,6 +80,7 @@
   --chart-2: #5A5A63;
   --chart-3: #38BDF8;
   --chart-4: #E879F9;
+  --chart-5: #84CC16;
   --switch-off: #3A3A40;
   --scrim: rgba(0, 0, 0, .6);
   color-scheme: dark;
@@ -416,7 +419,7 @@ select.input { background-image: linear-gradient(45deg, transparent 50%, var(--m
   bottom: 0;
   z-index: 10;
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   height: calc(var(--tabbar-h) + var(--safe-bottom));
   padding: 6px max(8px, env(safe-area-inset-left)) var(--safe-bottom) max(8px, env(safe-area-inset-right));
   background: color-mix(in srgb, var(--surface-raised) 92%, transparent);
@@ -679,7 +682,23 @@ button.row:active, a.row:active { transform: scale(.985); }
   .a-hist { grid-area: hist; }
 }
 
+/* ---------- Bilan ---------- */
+
+.stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-2); margin-top: var(--space-3); }
+.stat { display: flex; flex-direction: column; gap: 2px; padding: var(--space-3) var(--space-4); border-radius: var(--radius-md); background: var(--surface); min-width: 0; }
+.stat-val { font-size: 20px; line-height: 26px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.stat .caption { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.forecast-box { margin-top: var(--space-2); padding: var(--space-3) var(--space-4); border-radius: var(--radius-md); background: var(--surface); font-size: 14px; line-height: 20px; }
+.forecast { margin-top: var(--space-1); }
+
+@media (min-width: 960px) {
+  .view[data-route="bilan"] { grid-template-areas: "top top" "hero side" "main side"; }
+  .view[data-route="bilan"] .chips { margin: 0; padding: 0; flex-wrap: wrap; overflow: visible; }
+}
+
 /* Import : liste des abonnements trouvés, à cocher */
 .pick { cursor: pointer; }
 .pick input { flex: none; width: 22px; height: 22px; margin: 0; accent-color: var(--accent); }
 .row-link svg, .link-btn svg { width: 18px; height: 18px; stroke: currentColor; stroke-width: 2; fill: none; }
+
+.hero > .kind-switch { margin: 0 0 var(--space-2); }

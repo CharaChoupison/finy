@@ -6,6 +6,7 @@
 
   var STORE_KEY = 'finy:v1';
   var SUB_CATEGORIES = ['Streaming', 'Logiciels', 'Téléphonie', 'Sport', 'Jeux', 'Transport', 'Maison', 'Autre'];
+  var BILL_CATEGORIES = ['Logement', 'Énergie', 'Assurance', 'Crédit', 'Impôts', 'Santé', 'Autre'];
   var CAT_PALETTE = ['var(--chart-3)', 'var(--chart-4)', 'var(--ink)', 'var(--muted)'];
   var SUB_PALETTE = ['var(--accent)', 'var(--chart-3)', 'var(--chart-4)', 'var(--ink)'];
 
@@ -87,7 +88,8 @@
         site: typeof s.site === 'string' ? (normalizeSite(s.site) || '') : '',
         image: isImageData(s.image) ? s.image : null,
         trialEnd: isIsoDate(s.trialEnd) ? s.trialEnd : '',
-        paused: s.paused === true
+        paused: s.paused === true,
+        kind: s.kind === 'bill' ? 'bill' : 'sub'
       };
     }) : [];
     out.goals = Array.isArray(data.goals) ? data.goals.filter(function (g) {
@@ -119,7 +121,7 @@
       Object.keys(data.history).forEach(function (k) {
         var h = data.history[k];
         if (!isMonthKey(k) || !h || typeof h !== 'object') return;
-        out.history[k] = { income: num(h.income, 0), saved: num(h.saved, 0), subs: num(h.subs, 0), cats: num(h.cats, 0), free: num(h.free, 0) };
+        out.history[k] = { income: num(h.income, 0), saved: num(h.saved, 0), subs: num(h.subs, 0), bills: num(h.bills, 0), cats: num(h.cats, 0), spent: num(h.spent, -1), free: num(h.free, 0) };
       });
     }
     var meta = data.meta || {};
@@ -166,7 +168,7 @@
     if (state.salary > 0) {
       var tt = totals();
       var r = function (n) { return Math.round(n * 100) / 100; };
-      state.history[monthKey(t)] = { income: r(tt.income), saved: r(state.savings + tt.goals), subs: r(tt.subs), cats: r(tt.cats), free: r(tt.free) };
+      state.history[monthKey(t)] = { income: r(tt.income), saved: r(state.savings + tt.goals), subs: r(tt.subs), bills: r(tt.bills), cats: r(tt.cats), spent: r(tt.spent), free: r(tt.free) };
     }
     var oldest = monthKey(new Date(t.getFullYear() - 3, t.getMonth(), 1));
     Object.keys(state.history).forEach(function (k) { if (k < oldest) delete state.history[k]; });
@@ -197,7 +199,7 @@
   }
 
   var state = load();
-  var ui = { abosFilter: 'Tous', abosQuery: '', calOffset: 0, calSel: null, focusAfter: null, counts: {} };
+  var ui = { abosKind: 'sub', abosFilter: 'Tous', abosQuery: '', bilanMetric: 'free', bilanAll: false, calOffset: 0, calSel: null, focusAfter: null, counts: {} };
 
   // ---------- Format ----------
 
@@ -282,8 +284,13 @@
     return chargeIn(s, t.getFullYear(), t.getMonth()) ? s.amount : 0;
   }
 
-  function yearTotal() {
-    return state.subs.reduce(function (a, s) { return a + (s.paused ? 0 : s.frequency === 'year' ? s.amount : s.amount * 12); }, 0);
+  function isBill(s) { return s.kind === 'bill'; }
+
+  // Abonnements ou charges fixes (loyer, énergie, assurance…) : même fonctionnement, comptés à part.
+  function ofKind(kind, list) { return (list || state.subs).filter(function (s) { return (kind === 'bill') === isBill(s); }); }
+
+  function yearTotal(kind) {
+    return ofKind(kind).reduce(function (a, s) { return a + (s.paused ? 0 : s.frequency === 'year' ? s.amount : s.amount * 12); }, 0);
   }
 
   // Prochain abonnement annuel qui ne tombe pas ce mois-ci (pour prévenir à l'avance).
@@ -366,19 +373,51 @@
     var salary = o.salary != null ? o.salary : state.salary;
     var savings = o.savings != null ? o.savings : state.savings;
     var extras = extrasThisMonth().reduce(function (a, i) { return a + i.amount; }, 0);
-    var subs = (o.subs || state.subs).reduce(function (a, s) { return a + costThisMonth(s); }, 0);
+    var cost = function (a, s) { return a + costThisMonth(s); };
+    var subs = ofKind('sub', o.subs).reduce(cost, 0);
+    var bills = ofKind('bill', o.subs).reduce(cost, 0);
     var cats = state.categories.reduce(function (a, c) { return a + catCost(c); }, 0);
+    var catSpent = state.categories.reduce(function (a, c) { return a + spentIn(c.id); }, 0);
     var goals = goalsMonthly();
     var income = salary + extras;
-    var rest = income - savings - goals - subs;
+    var rest = income - savings - goals - subs - bills;
     var free = rest - cats;
     // Ce qui est vraiment libre (catégories déjà réservées), réparti sur les jours du mois en cours.
     var t = today();
-    return { income: income, extras: extras, subs: subs, cats: cats, goals: goals, rest: rest, free: free, weekly: Math.max(0, free) * 7 / daysIn(t.getFullYear(), t.getMonth()) };
+    return { income: income, extras: extras, subs: subs, bills: bills, spent: subs + bills + catSpent, cats: cats, goals: goals, rest: rest, free: free, weekly: Math.max(0, free) * 7 / daysIn(t.getFullYear(), t.getMonth()) };
   }
 
-  function yearlyCount() {
-    return state.subs.filter(function (s) { return s.frequency === 'year' && !s.paused; }).length;
+  // Prévision de fin de mois : les catégories où l'on a dépensé suivent le rythme actuel,
+  // les autres comptent leur budget entier. Rien avant le 5 du mois (trop tôt pour un rythme).
+  function forecast() {
+    var t = today();
+    var day = t.getDate(), n = daysIn(t.getFullYear(), t.getMonth());
+    if (state.salary <= 0 || !state.categories.length || day < 5) return null;
+    var any = false;
+    var proj = state.categories.reduce(function (a, c) {
+      var spent = spentIn(c.id);
+      if (spent > 0) any = true;
+      return a + (spent > 0 ? Math.max(spent, spent / day * n) : c.amount);
+    }, 0);
+    if (!any) return null;
+    var budget = state.categories.reduce(function (a, c) { return a + c.amount; }, 0);
+    // Catégorie qui part le plus vite au-dessus de son budget, pour l'expliquer.
+    var worst = null;
+    state.categories.forEach(function (c) {
+      var spent = spentIn(c.id);
+      var p = spent / day * n;
+      if (spent > 0 && p > c.amount && (!worst || p - c.amount > worst.over)) worst = { name: c.name, over: p - c.amount, proj: p };
+    });
+    return { end: totals().rest - proj, proj: proj, budget: budget, lastDay: n, worst: worst };
+  }
+
+  function forecastLine(f) {
+    return 'À ce rythme, il te restera environ <span class="strong"' + (f.end < 0 ? ' style="color:var(--danger)"' : '') + '>' + euro(Math.round(f.end)) + '</span> le ' + f.lastDay + '.' +
+      (f.worst ? ' ' + esc(f.worst.name) + ' file vers ' + euro(Math.round(f.worst.proj)) + '.' : '');
+  }
+
+  function yearlyCount(kind) {
+    return (kind ? ofKind(kind) : state.subs).filter(function (s) { return s.frequency === 'year' && !s.paused; }).length;
   }
 
   // Les abonnements en pause n'ont pas de date : ils passent en fin de liste, seulement si on les demande.
@@ -508,6 +547,7 @@
       html += '<section class="hero a-hero" aria-label="Ce qu\'il te reste"><p class="label">Il te reste ce mois-ci</p>' + hero(t.free, 'free') +
         '<p class="caption">Après ton épargne, tes objectifs, tes abonnements' + (state.categories.length ? ' et tes catégories' : '') + '</p>' +
         '<p class="pill-info"><span class="strong">' + euro(t.weekly) + '</span><span class="muted">pour te faire plaisir cette semaine</span></p>' +
+        (forecast() ? '<p class="caption forecast">' + forecastLine(forecast()) + '</p>' : '') +
         backupNotice() + '</section>';
     }
 
@@ -519,8 +559,10 @@
       var parts = [
         { name: 'Épargne', value: state.savings, color: 'var(--accent)', href: '#/epargne' },
         { name: 'Objectifs', value: t.goals, color: 'var(--chart-4)', href: '#/epargne', goals: true },
-        { name: 'Abonnements', value: t.subs, color: 'var(--chart-2)', href: '#/abonnements' }
+        { name: 'Charges fixes', value: t.bills, color: 'var(--chart-5)', go: 'bill' },
+        { name: 'Abonnements', value: t.subs, color: 'var(--chart-2)', go: 'sub' }
       ];
+      if (t.bills <= 0 && !ofKind('bill').length) parts.splice(2, 1);
       if (t.goals <= 0) parts.splice(1, 1);
       state.categories.forEach(function (c, i) {
         parts.push({ name: c.name, value: catCost(c), color: CAT_PALETTE[i % CAT_PALETTE.length], cat: c });
@@ -535,11 +577,13 @@
           if (p.cat) return catRow(p.cat, p.color);
           var inner = '<span class="dot" style="--c:' + p.color + '" aria-hidden="true"></span><span class="row-main"><span class="row-title">' + esc(p.name) + '</span></span><span class="row-amount">' + euro(p.value) + '</span>';
           if (p.goals) return '<a class="row" href="' + p.href + '">' + inner + '</a>' + goalRows();
+          if (p.go) return '<button type="button" class="row" data-action="go-abos" data-value="' + p.go + '">' + inner + '</button>';
           return '<a class="row" href="' + p.href + '">' + inner + '</a>';
         }).join('') +
         '<div class="row"><span class="dot" style="--c:var(--border)" aria-hidden="true"></span><span class="row-main"><span class="row-title strong">Libre</span></span>' +
         '<span class="row-amount"' + (t.free < 0 ? ' style="color:var(--danger)"' : '') + '>' + euro(t.free) + '</span></div>' +
-        '<button type="button" class="row row-link" data-action="add-cat">' + icon('plus') + 'Ajouter une catégorie</button></div>' +
+        '<button type="button" class="row row-link" data-action="add-cat">' + icon('plus') + 'Ajouter une catégorie</button>' +
+        (ofKind('bill').length ? '' : '<button type="button" class="row row-link" data-action="add-bill">' + icon('plus') + 'Ajouter une charge fixe (loyer, énergie…)</button>') + '</div>' +
         (t.rest < 0 ? '<p class="alert">Tes dépenses fixes dépassent tes revenus. Baisse ton épargne, allonge un objectif ou mets un abonnement en pause.</p>'
           : t.free < 0 ? '<p class="alert">Tes catégories dépassent ce qu\'il te reste ce mois-ci.</p>' : '') +
         '</section>';
@@ -583,31 +627,46 @@
       '<button type="button" class="link-btn" style="color:var(--muted)" data-action="backup-later">Plus tard</button></span></div>';
   }
 
-  // Les 6 derniers mois : ce qui est resté libre, et ce qui a été mis de côté.
-  function historySection() {
+  var METRICS = { free: 'Libre', saved: 'Épargné', subs: 'Abonnements', bills: 'Charges fixes' };
+
+  // Les mois enregistrés parmi les `count` derniers, du plus ancien au plus récent.
+  function historyMonths(count) {
     var t = today();
     var months = [];
-    for (var i = 5; i >= 0; i--) {
+    for (var i = count - 1; i >= 0; i--) {
       var d = new Date(t.getFullYear(), t.getMonth() - i, 1);
       var h = state.history[monthKey(d)];
       if (h) months.push({ d: d, h: h, now: i === 0 });
     }
+    return months;
+  }
+
+  // Barres mois par mois pour une mesure (libre, épargné…), avec l'écart au mois d'avant.
+  function historyChart(count, metric) {
+    var months = historyMonths(count);
     if (months.length < 2) return '';
-    var max = months.reduce(function (a, x) { return Math.max(a, Math.abs(x.h.free)); }, 0) || 1;
+    var name = METRICS[metric];
+    var max = months.reduce(function (a, x) { return Math.max(a, Math.abs(x.h[metric] || 0)); }, 0) || 1;
     var short = new Intl.DateTimeFormat('fr-FR', { month: 'short' });
-    var prev = months[months.length - 2].h.free, cur = months[months.length - 1].h.free;
+    var prev = months[months.length - 2].h[metric] || 0, cur = months[months.length - 1].h[metric] || 0;
     var delta = cur - prev;
-    return '<section class="section a-hist"><div class="section-head"><h2 class="heading">Mois par mois</h2><span class="label">Libre</span></div>' +
-      '<div class="group hist"><div class="bars" role="img" aria-label="' + esc(months.map(function (x) { return cap(monthName.format(x.d)) + ' ' + euro(x.h.free); }).join(', ')) + '">' +
+    return '<div class="bars" role="img" aria-label="' + esc(name + ' : ' + months.map(function (x) { return cap(monthName.format(x.d)) + ' ' + euro(x.h[metric] || 0); }).join(', ')) + '">' +
       months.map(function (x) {
-        var hgt = Math.max(2, Math.abs(x.h.free) / max * 100);
-        var tip = cap(monthName.format(x.d)) + ' : ' + euro(x.h.free) + ' libre, ' + euro(x.h.saved) + ' mis de côté';
-        return '<div class="bar' + (x.now ? ' now' : '') + (x.h.free < 0 ? ' neg' : '') + '" title="' + esc(tip) + '">' +
-          '<span class="bar-val">' + (x.now ? euro(x.h.free) : '') + '</span><span class="bar-col"><i style="height:' + hgt.toFixed(1) + '%"></i></span>' +
+        var v = x.h[metric] || 0;
+        var hgt = Math.max(2, Math.abs(v) / max * 100);
+        return '<div class="bar' + (x.now ? ' now' : '') + (v < 0 ? ' neg' : '') + '" title="' + esc(cap(monthName.format(x.d)) + ' · ' + name + ' : ' + euro(v)) + '">' +
+          '<span class="bar-val">' + (x.now ? euro(v) : '') + '</span><span class="bar-col"><i style="height:' + hgt.toFixed(1) + '%"></i></span>' +
           '<span class="bar-m">' + esc(short.format(x.d).replace('.', '')) + '</span></div>';
       }).join('') + '</div>' +
-      '<p class="caption hist-note">' + (Math.abs(delta) < 1 ? 'Comme le mois dernier.' : (delta > 0 ? '+ ' : '− ') + euro(Math.abs(delta)) + ' par rapport au mois dernier.') +
-      ' Mis de côté ce mois-ci : ' + euro(months[months.length - 1].h.saved) + '.</p></div></section>';
+      '<p class="caption hist-note">' + (Math.abs(delta) < 1 ? 'Comme le mois dernier.' : (delta > 0 ? '+ ' : '− ') + euro(Math.abs(delta)) + ' par rapport au mois dernier.') + '</p>';
+  }
+
+  // Les 6 derniers mois sur l'accueil : ce qui est resté libre.
+  function historySection() {
+    var chart = historyChart(6, 'free');
+    if (!chart) return '';
+    return '<section class="section a-hist"><div class="section-head"><h2 class="heading">Mois par mois</h2><a href="#/bilan" class="label" style="color:var(--accent)">Bilan</a></div>' +
+      '<div class="group hist">' + chart + '</div></section>';
   }
 
   // Détail des objectifs en cours, sous la ligne « Objectifs ».
@@ -628,59 +687,72 @@
 
   function viewAbos() {
     var t = totals();
-    var html = '<header class="topbar a-top"><h1 class="title">Abonnements</h1>' +
-      '<button type="button" class="btn btn-primary" data-action="add-sub">' + icon('plus') + 'Ajouter</button></header>';
+    var bill = ui.abosKind === 'bill';
+    var mine = ofKind(ui.abosKind);
+    var amount = bill ? t.bills : t.subs;
+    var html = '<header class="topbar a-top"><h1 class="title">' + (bill ? 'Charges fixes' : 'Abonnements') + '</h1>' +
+      '<button type="button" class="btn btn-primary" data-action="' + (bill ? 'add-bill' : 'add-sub') + '">' + icon('plus') + 'Ajouter</button></header>';
 
     var smooth = state.settings.annualMode === 'smooth';
-    var yc = yearlyCount();
-    var smoothPart = state.subs.filter(function (s) { return s.frequency === 'year' && !s.paused; }).reduce(function (a, s) { return a + s.amount / 12; }, 0);
-    var pausedCount = state.subs.filter(function (s) { return s.paused; }).length;
+    var yc = yearlyCount(ui.abosKind);
+    var smoothPart = mine.filter(function (s) { return s.frequency === 'year' && !s.paused; }).reduce(function (a, s) { return a + s.amount / 12; }, 0);
+    var pausedCount = mine.filter(function (s) { return s.paused; }).length;
     var monthWord = new Intl.DateTimeFormat('fr-FR', { month: 'long' }).format(today());
+    var noun = bill ? ' charge' : ' abonnement';
     html += '<section class="hero a-hero" aria-label="Total">' +
+      '<div class="segmented kind-switch" role="radiogroup" aria-label="Afficher">' +
+      '<button type="button" role="radio" aria-checked="' + !bill + '" data-action="abos-kind" data-value="sub">Abonnements</button>' +
+      '<button type="button" role="radio" aria-checked="' + bill + '" data-action="abos-kind" data-value="bill">Charges fixes</button></div>' +
       (yc ? '<p class="label">' + (smooth ? 'Par mois, annuels lissés' : 'Prélevé en ' + monthWord) + '</p>' : '') +
-      '<p class="amount-big"><span data-count="subs" data-kind="big" data-value="' + t.subs + '">' + euro(t.subs) + '</span><small>/mois</small></p>' +
-      '<p class="label" style="font-weight:400">' + euro(yearTotal()) + ' sur un an · ' + state.subs.length + ' abonnement' + (state.subs.length > 1 ? 's' : '') +
+      '<p class="amount-big"><span data-count="abos-' + ui.abosKind + '" data-kind="big" data-value="' + amount + '">' + euro(amount) + '</span><small>/mois</small></p>' +
+      '<p class="label" style="font-weight:400">' + euro(yearTotal(ui.abosKind)) + ' sur un an · ' + mine.length + noun + (mine.length > 1 ? 's' : '') +
       (yc && smooth ? ', dont ' + euro(smoothPart) + ' pour ' + yc + ' annuel' + (yc > 1 ? 's' : '') : '') +
       (pausedCount ? ' · ' + pausedCount + ' en pause' : '') + '</p>';
     if (yc) {
       var nx = nextYearly();
-      html += segmented('annualMode', [['actual', 'Ce mois-ci'], ['smooth', 'Lissé']], state.settings.annualMode, 'Compter les abonnements annuels', true) +
+      html += segmented('annualMode', [['actual', 'Ce mois-ci'], ['smooth', 'Lissé']], state.settings.annualMode, 'Compter les paiements annuels', true) +
         (!smooth && nx ? '<p class="pill-info"><span class="soon-dot" aria-hidden="true" style="background:var(--accent)"></span><span>' + esc(nx.sub.name) + ' : <span class="strong">' + euro(nx.sub.amount) + '</span> à prévoir en ' + new Intl.DateTimeFormat('fr-FR', { month: 'long' }).format(nx.date) + '</span></p>' : '');
     }
     html += '</section>';
 
-    if (!state.subs.length) {
-      return html + '<div class="group a-main"><div class="empty"><span>Aucun abonnement pour l\'instant.</span><span class="caption">Ajoute tes paiements récurrents pour voir où part ton argent.</span></div>' +
-        importButton('row row-link') + '</div>';
+    if (!mine.length) {
+      return html + '<div class="group a-main"><div class="empty">' + (bill
+        ? '<span>Aucune charge fixe pour l\'instant.</span><span class="caption">Loyer, électricité, assurance, crédit… Ajoute ce qui part chaque mois sans être un abonnement.</span></div>' +
+          '<button type="button" class="row row-link" data-action="add-bill">' + icon('plus') + 'Ajouter une charge fixe</button>'
+        : '<span>Aucun abonnement pour l\'instant.</span><span class="caption">Ajoute tes paiements récurrents pour voir où part ton argent.</span></div>' + importButton('row row-link')) + '</div>';
     }
 
-    var present = SUB_CATEGORIES.filter(function (c) { return state.subs.some(function (s) { return s.category === c; }); });
-    state.subs.forEach(function (s) { if (present.indexOf(s.category) < 0) present.push(s.category); });
+    var present = (bill ? BILL_CATEGORIES : SUB_CATEGORIES).filter(function (c) { return mine.some(function (s) { return s.category === c; }); });
+    mine.forEach(function (s) { if (present.indexOf(s.category) < 0) present.push(s.category); });
     if (ui.abosFilter !== 'Tous' && present.indexOf(ui.abosFilter) < 0) ui.abosFilter = 'Tous';
 
     html += '<div class="section a-actions" style="gap:12px"><label class="search">' + icon('search') +
-      '<span class="sr-only">Rechercher un abonnement</span><input type="search" id="abos-q" placeholder="Rechercher" autocomplete="off" value="' + esc(ui.abosQuery) + '" data-input="abos-q"></label>' +
+      '<span class="sr-only">Rechercher</span><input type="search" id="abos-q" placeholder="Rechercher" autocomplete="off" value="' + esc(ui.abosQuery) + '" data-input="abos-q"></label>' +
       '<div class="chips" role="group" aria-label="Filtrer par catégorie">' +
       ['Tous'].concat(present).map(function (c) {
         return '<button type="button" class="chip" data-action="abos-filter" data-value="' + esc(c) + '" aria-pressed="' + (c === ui.abosFilter) + '">' + esc(c) + '</button>';
       }).join('') + '</div></div>';
 
     var byCat = {};
-    state.subs.forEach(function (s) { byCat[s.category] = (byCat[s.category] || 0) + costThisMonth(s); });
+    mine.forEach(function (s) { byCat[s.category] = (byCat[s.category] || 0) + costThisMonth(s); });
     Object.keys(byCat).forEach(function (k) { if (byCat[k] <= 0) delete byCat[k]; });
     var cats = Object.keys(byCat).map(function (k) { return { name: k, value: byCat[k] }; }).sort(function (a, b) { return b.value - a.value; });
     var shown = cats.slice(0, 4).map(function (c, i) { return { name: c.name, value: c.value, color: SUB_PALETTE[i] }; });
     if (cats.length > 4) {
       shown.push({ name: 'Autres', value: cats.slice(4).reduce(function (a, c) { return a + c.value; }, 0), color: 'var(--chart-2)' });
     }
-    html += '<section class="section a-side"><h2 class="heading">Par catégorie</h2>' +
-      splitBar(shown, shown.map(function (c) { return c.name + ' ' + euro(c.value); }).join(', ')) +
-      '<div class="legend">' + shown.map(function (c) {
-        return '<div><span class="dot sm" style="--c:' + c.color + '" aria-hidden="true"></span><span class="name">' + esc(c.name) + '</span><span class="strong">' + euro(c.value) + '</span></div>';
-      }).join('') + '</div></section>';
+    if (shown.length) {
+      html += '<section class="section a-side"><h2 class="heading">Par catégorie</h2>' +
+        splitBar(shown, shown.map(function (c) { return c.name + ' ' + euro(c.value); }).join(', ')) +
+        '<div class="legend">' + shown.map(function (c) {
+          return '<div><span class="dot sm" style="--c:' + c.color + '" aria-hidden="true"></span><span class="name">' + esc(c.name) + '</span><span class="strong">' + euro(c.value) + '</span></div>';
+        }).join('') + '</div></section>';
+    }
 
     html += '<section class="section a-main"><div class="section-head"><h2 class="heading" id="abos-title"></h2><span class="label" style="font-weight:400">Par date</span></div>' +
-      '<div class="group" id="abos-list"></div><div class="group">' + importButton('row row-link') + '</div></section>';
+      '<div class="group" id="abos-list"></div><div class="group">' + (bill
+        ? '<button type="button" class="row row-link" data-action="add-bill">' + icon('plus') + 'Ajouter une charge fixe</button>'
+        : importButton('row row-link')) + '</div></section>';
     return html;
   }
 
@@ -696,9 +768,9 @@
     if (!list) return;
     var q = ui.abosQuery.trim().toLowerCase();
     var items = upcoming(true).filter(function (u) {
-      return (ui.abosFilter === 'Tous' || u.sub.category === ui.abosFilter) && (!q || u.sub.name.toLowerCase().indexOf(q) >= 0);
+      return (ui.abosKind === 'bill') === isBill(u.sub) && (ui.abosFilter === 'Tous' || u.sub.category === ui.abosFilter) && (!q || u.sub.name.toLowerCase().indexOf(q) >= 0);
     });
-    document.getElementById('abos-title').textContent = ui.abosFilter === 'Tous' ? 'Tous les abonnements' : ui.abosFilter;
+    document.getElementById('abos-title').textContent = ui.abosFilter !== 'Tous' ? ui.abosFilter : ui.abosKind === 'bill' ? 'Toutes les charges' : 'Tous les abonnements';
     list.innerHTML = items.length ? items.map(function (u) { return subRow(u, true); }).join('')
       : '<div class="empty"><span>Aucun résultat.</span></div>';
   }
@@ -833,7 +905,8 @@
       '<button type="button" class="row row-link row-sub-link" data-action="add-income">' + icon('plus') + 'Ajouter un revenu ce mois-ci</button>' +
       calcRow('Épargne', '− ' + euro(state.savings), 'var(--accent)') +
       (t.goals > 0 ? calcRow('Objectifs', '− ' + euro(t.goals), 'var(--chart-4)') : '') +
-      calcRow(yearlyCount() ? (state.settings.annualMode === 'smooth' ? 'Abonnements (annuels lissés)' : 'Abonnements (ce mois-ci)') : 'Abonnements', '− ' + euro(t.subs), 'var(--chart-2)') +
+      (t.bills > 0 ? calcRow('Charges fixes', '− ' + euro(t.bills), 'var(--chart-5)') : '') +
+      calcRow(yearlyCount('sub') ? (state.settings.annualMode === 'smooth' ? 'Abonnements (annuels lissés)' : 'Abonnements (ce mois-ci)') : 'Abonnements', '− ' + euro(t.subs), 'var(--chart-2)') +
       (t.cats > 0 ? calcRow('Catégories', '− ' + euro(t.cats), 'var(--chart-3)') : '') +
       '<div class="row" style="min-height:60px"><span class="row-main"><span class="strong">Il te reste</span></span><span class="row-amount" style="font-size:20px;line-height:26px;font-weight:700' + (t.free < 0 ? ';color:var(--danger)' : '') + '">' + euro(t.free) + '</span></div>' +
       '<div class="row"><span class="row-main"><span class="muted">Pour te faire plaisir cette semaine</span></span><span class="row-amount">' + euro(t.weekly) + '</span></div>';
@@ -999,6 +1072,69 @@
     return '<div class="row"><span class="dot" style="--c:' + color + '" aria-hidden="true"></span><span class="row-main"><span class="muted">' + label + '</span></span><span class="row-amount">' + value + '</span></div>';
   }
 
+  // ---------- Écran : Bilan ----------
+
+  function viewBilan() {
+    var t = totals();
+    var html = '<header class="topbar a-top"><h1 class="title">Bilan</h1><span class="label">' + cap(monthName.format(today())) + '</span></header>';
+    if (state.salary <= 0) {
+      return html + '<section class="section a-hero"><div class="group"><div class="empty"><span>Indique ton salaire pour voir ton bilan.</span>' +
+        '<button type="button" class="link-btn" data-action="edit-salary">Indiquer mon salaire</button></div></div></section>';
+    }
+
+    // Taux d'épargne : épargne mensuelle + objectifs, sur les revenus du mois.
+    var saved = state.savings + t.goals;
+    var rate = t.income > 0 ? Math.round(saved / t.income * 100) : 0;
+    html += '<section class="hero a-hero" aria-label="Taux d\'épargne"><p class="label">Tu mets de côté</p>' +
+      '<p class="amount-hero"><span class="int">' + rate + '</span><span class="dec">&nbsp;%</span></p>' +
+      '<p class="caption">de tes revenus : ' + euro(saved) + ' sur ' + euro(t.income) + ', épargne et objectifs compris.</p>';
+
+    // Le mois en chiffres, comparé au mois d'avant quand il est enregistré.
+    var prevKey = monthKey(new Date(today().getFullYear(), today().getMonth() - 1, 1));
+    var prev = state.history[prevKey];
+    var stat = function (label, value, key, goodUp) {
+      // « spent » vaut -1 pour les mois enregistrés avant son ajout.
+      var d = prev && prev[key] != null && !(key === 'spent' && prev[key] < 0) ? value - prev[key] : null;
+      var cls = d === null || Math.abs(d) < 1 ? 'muted' : (d > 0) === goodUp ? 'ok' : 'soon';
+      return '<div class="stat"><span class="label">' + label + '</span><span class="stat-val">' + euro(value) + '</span>' +
+        '<span class="caption ' + cls + '">' + (d === null ? '&nbsp;' : Math.abs(d) < 1 ? '= Pareil' : (d > 0 ? '▲ ' : '▼ ') + euro(Math.abs(d)) + '<span class="sr-only">' + (d > 0 ? ' de plus' : ' de moins') + '</span>') + '</span></div>';
+    };
+    html += '<div class="stats">' + stat('Revenus', t.income, 'income', true) + stat('Dépensé', t.spent, 'spent', false) +
+      stat('Mis de côté', saved, 'saved', true) + stat('Libre', t.free, 'free', true) + '</div>' +
+      (prev ? '<p class="caption">Écarts comparés à ' + new Intl.DateTimeFormat('fr-FR', { month: 'long' }).format(new Date(today().getFullYear(), today().getMonth() - 1, 1)) + '.</p>' : '');
+    var f = forecast();
+    if (f) html += '<p class="forecast-box">' + forecastLine(f) + '</p>';
+    html += '</section>';
+
+    // Le graphique sur 12 mois, avec la mesure au choix.
+    var chart = historyChart(12, ui.bilanMetric);
+    html += '<section class="section a-main"><div class="section-head"><h2 class="heading">Sur 12 mois</h2></div>' +
+      '<div class="chips" role="group" aria-label="Mesure affichée">' + Object.keys(METRICS).map(function (k) {
+        return '<button type="button" class="chip" data-action="bilan-metric" data-value="' + k + '" aria-pressed="' + (k === ui.bilanMetric) + '">' + METRICS[k] + '</button>';
+      }).join('') + '</div>' +
+      '<div class="group hist">' + (chart || '<div class="empty"><span>Finy garde une photo de chaque mois quand tu l\'ouvres.</span><span class="caption">Le graphique apparaîtra dès le mois prochain.</span></div>') + '</div></section>';
+
+    // Où part l'argent : chaque abonnement, charge et catégorie du mois, du plus cher au moins cher.
+    var items = state.subs.filter(function (s) { return costThisMonth(s) > 0; }).map(function (s) {
+      return { name: s.name, value: costThisMonth(s), kind: isBill(s) ? 'Charge fixe' : 'Abonnement', color: isBill(s) ? 'var(--chart-5)' : 'var(--chart-2)' };
+    }).concat(state.categories.map(function (c, i) {
+      return { name: c.name, value: catCost(c), kind: spentIn(c.id) > c.amount ? 'Catégorie · dépassée' : 'Catégorie', color: CAT_PALETTE[i % CAT_PALETTE.length] };
+    })).filter(function (x) { return x.value > 0; }).sort(function (a, b) { return b.value - a.value; });
+    var total = items.reduce(function (a, x) { return a + x.value; }, 0);
+    var shown = ui.bilanAll ? items : items.slice(0, 8);
+    html += '<section class="section a-side"><div class="section-head"><h2 class="heading">Où part ton argent</h2><span class="label">' + euro(total) + '</span></div><div class="group">' +
+      (items.length ? shown.map(function (x) {
+        var share = total > 0 ? x.value / total : 0;
+        return '<div class="row tall goal"><span class="dot" style="--c:' + x.color + '" aria-hidden="true"></span><span class="row-main"><span class="row-title">' + esc(x.name) + '</span>' +
+          '<span class="row-meta"><span>' + x.kind + ' · ' + Math.round(share * 100) + ' %</span></span>' +
+          '<span class="goal-bar" aria-hidden="true"><span style="width:' + (share * 100).toFixed(1) + '%;background:' + x.color + '"></span></span></span>' +
+          '<span class="row-amount">' + euro(x.value) + '</span></div>';
+      }).join('') + (items.length > 8 ? '<button type="button" class="row row-link" data-action="bilan-all">' + (ui.bilanAll ? 'Voir moins' : 'Voir les ' + items.length) + '</button>' : '')
+        : '<div class="empty"><span>Rien à afficher pour l\'instant.</span></div>') +
+      '</div><p class="caption">Abonnements et charges prélevés ce mois-ci, et budget de chaque catégorie (ou ce qui a été dépensé s\'il est dépassé).</p></section>';
+    return html;
+  }
+
   // ---------- Écran : Réglages ----------
 
   function viewSettings() {
@@ -1063,6 +1199,7 @@
     calendrier: { tab: 'calendrier', view: viewCal },
     abonnements: { tab: 'abonnements', view: viewAbos, after: fillAbosList },
     epargne: { tab: 'epargne', view: viewSavings, after: fillSavings },
+    bilan: { tab: 'bilan', view: viewBilan },
     reglages: { tab: 'reglages', view: viewSettings }
   };
 
@@ -1087,7 +1224,7 @@
       if (a.dataset.tab === r.tab) a.setAttribute('aria-current', 'page');
       else a.removeAttribute('aria-current');
     });
-    document.title = { '': 'Finy', calendrier: 'Calendrier · Finy', abonnements: 'Abonnements · Finy', epargne: 'Épargne · Finy', reglages: 'Réglages · Finy' }[key];
+    document.title = { '': 'Finy', calendrier: 'Calendrier · Finy', abonnements: 'Abonnements · Finy', epargne: 'Épargne · Finy', bilan: 'Bilan · Finy', reglages: 'Réglages · Finy' }[key];
     if (ui.focusAfter) {
       var target = document.getElementById(ui.focusAfter);
       ui.focusAfter = null;
@@ -1175,47 +1312,58 @@
     });
   }
 
-  // `preset` pré-remplit un nouvel abonnement (lu dans une facture).
+  // Options de catégorie selon le type (abonnement ou charge fixe).
+  function catOptions(kind, current) {
+    var cats = (kind === 'bill' ? BILL_CATEGORIES : SUB_CATEGORIES).slice();
+    if (current && cats.indexOf(current) < 0) cats.push(current);
+    return cats.map(function (c) { return '<option' + (c === current ? ' selected' : '') + '>' + esc(c) + '</option>'; }).join('');
+  }
+
+  // `preset` pré-remplit un nouvel abonnement (lu dans une facture) ou choisit le type (`kind: 'bill'`).
   function editSub(id, preset) {
     var s = state.subs.filter(function (x) { return x.id === id; })[0];
     var isNew = !s;
-    s = s || Object.assign({ name: '', amount: 0, day: today().getDate(), month: today().getMonth(), frequency: 'month', category: 'Streaming', site: '', image: null }, preset);
+    s = s || Object.assign({ name: '', amount: 0, day: today().getDate(), month: today().getMonth(), frequency: 'month', category: 'Streaming', site: '', image: null, kind: 'sub' }, preset);
+    if (isNew && s.kind === 'bill' && !(preset && preset.category)) s.category = 'Logement';
+    var bill = s.kind === 'bill';
+    var word = bill ? 'cette charge' : 'cet abonnement';
     var yearly = s.frequency === 'year';
     var months = '';
     for (var mo = 0; mo < 12; mo++) {
       months += '<option value="' + mo + '"' + (mo === s.month ? ' selected' : '') + '>' + cap(new Intl.DateTimeFormat('fr-FR', { month: 'long' }).format(new Date(2026, mo, 1))) + '</option>';
     }
     sheetDraft = { name: s.name, site: s.site || '', image: s.image || null };
-    var cats = SUB_CATEGORIES.slice();
-    if (cats.indexOf(s.category) < 0) cats.push(s.category);
     var days = '';
     for (var d = 1; d <= 31; d++) days += '<option value="' + d + '"' + (d === s.day ? ' selected' : '') + '>' + d + '</option>';
-    var body = (isNew && !preset ? importButton('link-btn') : '') + '<div class="image-pick"><span id="draft-tile">' + subTile(sheetDraft, 'tile-lg') + '</span>' +
+    var body = (isNew && !preset ? importButton('link-btn') : '') +
+      '<div class="field"><span>Type</span><div class="segmented" role="radiogroup" aria-label="Type">' +
+      '<label class="seg-opt"><input type="radio" name="kind" value="sub" data-input="sub-kind"' + (bill ? '' : ' checked') + '><span>Abonnement</span></label>' +
+      '<label class="seg-opt"><input type="radio" name="kind" value="bill" data-input="sub-kind"' + (bill ? ' checked' : '') + '><span>Charge fixe</span></label></div></div>' +
+      '<div class="image-pick"><span id="draft-tile">' + subTile(sheetDraft, 'tile-lg') + '</span>' +
       '<div class="image-pick-actions"><label class="link-btn" style="display:inline-flex;align-items:center;cursor:pointer">Choisir une image<input type="file" accept="image/*" class="sr-only" data-input="sub-image"></label>' +
       '<button type="button" class="link-btn" data-action="sub-image-remove" style="color:var(--muted)"' + (s.image ? '' : ' hidden') + '>Retirer l\'image</button></div></div>' +
-      '<label class="field"><span>Nom</span><input class="input" name="name" type="text" maxlength="60" autocomplete="off" placeholder="Netflix, Orange…" value="' + esc(s.name) + '" data-input="sub-name"></label>' +
+      '<label class="field"><span>Nom</span><input class="input" name="name" type="text" maxlength="60" autocomplete="off" placeholder="' + (bill ? 'Loyer, EDF, assurance…' : 'Netflix, Orange…') + '" value="' + esc(s.name) + '" data-input="sub-name"></label>' +
       '<div class="field"><span>Fréquence</span><div class="segmented" role="radiogroup" aria-label="Fréquence">' +
       '<label class="seg-opt"><input type="radio" name="frequency" value="month" data-input="sub-freq"' + (yearly ? '' : ' checked') + '><span>Mensuel</span></label>' +
       '<label class="seg-opt"><input type="radio" name="frequency" value="year" data-input="sub-freq"' + (yearly ? ' checked' : '') + '><span>Annuel</span></label></div></div>' +
       '<label class="field"><span id="amount-label">' + (yearly ? 'Montant par an (€)' : 'Montant par mois (€)') + '</span><input class="input" name="amount" type="text" inputmode="decimal" autocomplete="off" placeholder="0,00" value="' + (s.amount ? plain(s.amount) : '') + '"></label>' +
       '<div class="field-row"><label class="field"><span>Jour du prélèvement</span><select class="input" name="day">' + days + '</select></label>' +
       '<label class="field" id="month-field"' + (yearly ? '' : ' hidden') + '><span>Mois</span><select class="input" name="month">' + months + '</select></label></div>' +
-      '<label class="field"><span>Catégorie</span><select class="input" name="category">' + cats.map(function (c) {
-        return '<option' + (c === s.category ? ' selected' : '') + '>' + esc(c) + '</option>';
-      }).join('') + '</select></label>' +
+      '<label class="field"><span>Catégorie</span><select class="input" name="category" id="sub-category">' + catOptions(s.kind, s.category) + '</select></label>' +
       '<label class="field"><span>Site du service (facultatif)</span><input class="input" name="site" type="text" inputmode="url" autocapitalize="off" autocorrect="off" spellcheck="false" autocomplete="off" placeholder="netflix.com" value="' + esc(s.site || '') + '" data-input="sub-site">' +
       '<span class="caption">Pour afficher son logo automatiquement. Seul le nom du site est envoyé à DuckDuckGo pour récupérer l\'icône.</span></label>' +
-      '<label class="field"><span>Essai gratuit jusqu\'au (facultatif)</span><input class="input" name="trialEnd" type="date" value="' + esc(s.trialEnd || '') + '">' +
+      '<label class="field" id="trial-field"' + (bill ? ' hidden' : '') + '><span>Essai gratuit jusqu\'au (facultatif)</span><input class="input" name="trialEnd" type="date" value="' + esc(s.trialEnd || '') + '">' +
       '<span class="caption">Rien n\'est compté avant cette date, et les rappels te préviennent pour résilier à temps.</span></label>' +
       '<div class="field"><span>État</span><div class="segmented" role="radiogroup" aria-label="État de l\'abonnement">' +
       '<label class="seg-opt"><input type="radio" name="paused" value="no"' + (s.paused ? '' : ' checked') + '><span>Actif</span></label>' +
       '<label class="seg-opt"><input type="radio" name="paused" value="yes"' + (s.paused ? ' checked' : '') + '><span>En pause</span></label></div>' +
       '<span class="caption">En pause, il reste dans ta liste mais n\'est plus compté ni rappelé.</span></div>';
-    var del = isNew ? '' : '<button type="button" class="btn btn-danger btn-block" data-action="delete-sub" data-id="' + esc(id) + '">Supprimer cet abonnement</button>';
-    openSheet(isNew ? 'Nouvel abonnement' : 'Modifier l\'abonnement', body, isNew ? 'Ajouter' : 'Enregistrer', function (data) {
+    var del = isNew ? '' : '<button type="button" class="btn btn-danger btn-block" data-action="delete-sub" data-id="' + esc(id) + '">Supprimer ' + word + '</button>';
+    openSheet(isNew ? (bill ? 'Nouvelle charge fixe' : 'Nouvel abonnement') : (bill ? 'Modifier la charge' : 'Modifier l\'abonnement'), body, isNew ? 'Ajouter' : 'Enregistrer', function (data) {
       var name = (data.name || '').trim();
       var amount = parseAmount(data.amount);
-      if (!name) return 'Donne un nom à cet abonnement.';
+      var kind = data.kind === 'bill' ? 'bill' : 'sub';
+      if (!name) return 'Donne un nom à ' + (kind === 'bill' ? 'cette charge.' : 'cet abonnement.');
       if (amount === null || amount <= 0) return 'Indique un montant, par exemple 9,99.';
       var site = '';
       if ((data.site || '').trim()) {
@@ -1229,12 +1377,15 @@
         frequency: freq,
         month: freq === 'year' ? Math.min(11, Math.max(0, parseInt(data.month, 10) || 0)) : (s.month || 0),
         category: data.category || 'Autre', site: site, image: sheetDraft.image,
-        trialEnd: isIsoDate(data.trialEnd) ? data.trialEnd : '',
-        paused: data.paused === 'yes'
+        trialEnd: kind === 'sub' && isIsoDate(data.trialEnd) ? data.trialEnd : '',
+        paused: data.paused === 'yes',
+        kind: kind
       };
       if (isNew) state.subs.push(item);
       else state.subs = state.subs.map(function (x) { return x.id === id ? item : x; });
-      toast(item.paused && !(s.paused) && !isNew ? 'Abonnement mis en pause' : isNew ? 'Abonnement ajouté' : 'Abonnement modifié');
+      ui.abosKind = kind;
+      var label = kind === 'bill' ? 'Charge' : 'Abonnement';
+      toast(item.paused && !(s.paused) && !isNew ? label + ' mis' + (kind === 'bill' ? 'e' : '') + ' en pause' : label + (isNew ? ' ajouté' : ' modifié') + (kind === 'bill' ? 'e' : ''));
     }, del);
   }
 
@@ -1276,7 +1427,7 @@
     var active = state.subs.filter(function (s) { return !s.paused; });
     var body = '<p class="pill-info" id="wi-out" aria-live="polite"></p><div id="wi-goals"></div>' +
       '<div class="field-row">' + amountField('salary', 'Salaire (€)', state.salary) + amountField('savings', 'Épargne par mois (€)', state.savings) + '</div>' +
-      (active.length ? '<div class="field"><span>Abonnements gardés</span><div class="group">' + active.map(function (s) {
+      (active.length ? '<div class="field"><span>' + (ofKind('bill', active).length ? 'Abonnements et charges gardés' : 'Abonnements gardés') + '</span><div class="group">' + active.map(function (s) {
         return '<label class="row pick">' + subTile(s) + '<span class="row-main"><span class="row-title">' + esc(s.name) + '</span></span>' +
           '<span class="row-amount">' + priceLabel(s) + '</span><input type="checkbox" name="keep-' + esc(s.id) + '" checked aria-label="Garder ' + esc(s.name) + '"></label>';
       }).join('') + '</div></div>' : '') +
@@ -1903,6 +2054,22 @@
     var v = el.dataset.value;
     switch (a) {
       case 'add-sub': return editSub(null);
+      case 'add-bill': return editSub(null, { kind: 'bill' });
+      case 'bilan-metric':
+        ui.bilanMetric = METRICS[v] ? v : 'free';
+        return render();
+      case 'bilan-all':
+        ui.bilanAll = !ui.bilanAll;
+        return render();
+      case 'go-abos':
+        ui.abosKind = v === 'bill' ? 'bill' : 'sub';
+        ui.abosFilter = 'Tous';
+        location.hash = '#/abonnements';
+        return;
+      case 'abos-kind':
+        ui.abosKind = v === 'bill' ? 'bill' : 'sub';
+        ui.abosFilter = 'Tous';
+        return render();
       case 'edit-sub': return editSub(id);
       case 'add-cat': return editCat(null);
       case 'edit-cat': return editCat(id);
@@ -1916,7 +2083,7 @@
         return;
       case 'sheet-close': return closeSheet();
       case 'delete-sub':
-        if (!window.confirm('Supprimer cet abonnement ?')) return;
+        if (!window.confirm('Supprimer ' + (isBill(state.subs.filter(function (s) { return s.id === id; })[0] || {}) ? 'cette charge ?' : 'cet abonnement ?'))) return;
         state.subs = state.subs.filter(function (s) { return s.id !== id; });
         closeSheet(); save(); render(); toast('Abonnement supprimé');
         return;
@@ -2025,6 +2192,12 @@
     var el = e.target;
     if (sheetForm.dataset.kind === 'whatif' && sheetForm.contains(el)) previewWhatIf();
     if (el.dataset.input === 'sv-input') fillSavings();
+    if (el.dataset.input === 'sub-kind') {
+      var b = el.value === 'bill';
+      var sel = document.getElementById('sub-category');
+      sel.innerHTML = catOptions(el.value, b ? 'Logement' : 'Streaming');
+      document.getElementById('trial-field').hidden = b;
+    }
     if (el.dataset.input === 'sub-freq') {
       var year = el.value === 'year';
       document.getElementById('amount-label').textContent = year ? 'Montant par an (€)' : 'Montant par mois (€)';
