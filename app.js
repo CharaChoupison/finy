@@ -22,7 +22,10 @@
     download: 'M12 4v11M7 10l5 5 5-5M5 20h14',
     upload: 'M12 20V9M7 14l5-5 5 5M5 4h14',
     refresh: 'M20 12a8 8 0 1 1-2.3-5.6M20 4v5h-5',
-    close: 'M6 6l12 12M18 6L6 18'
+    close: 'M6 6l12 12M18 6L6 18',
+    receipt: 'M6 3h12v18l-3-2-3 2-3-2-3 2zM9 8h6M9 12h6M9 16h3',
+    trend: 'M3 17l6-6 4 4 8-8M15 7h6v6',
+    sliders: 'M4 6h9M17 6h3M15 4v4M4 12h3M11 12h9M9 10v4M4 18h11M19 18h1M17 16v4'
   };
 
   function icon(name, cls) {
@@ -42,6 +45,10 @@
       categories: [],
       subs: [],
       goals: [],
+      incomes: [],
+      expenses: [],
+      history: {},
+      meta: { since: null, lastExport: null, backupSnooze: null },
       settings: {
         theme: 'system',
         homeCount: 3,
@@ -78,7 +85,9 @@
         month: Math.min(11, Math.max(0, Math.round(num(s.month, new Date().getMonth())))),
         category: typeof s.category === 'string' && s.category ? s.category.slice(0, 30) : 'Autre',
         site: typeof s.site === 'string' ? (normalizeSite(s.site) || '') : '',
-        image: isImageData(s.image) ? s.image : null
+        image: isImageData(s.image) ? s.image : null,
+        trialEnd: isIsoDate(s.trialEnd) ? s.trialEnd : '',
+        paused: s.paused === true
       };
     }) : [];
     out.goals = Array.isArray(data.goals) ? data.goals.filter(function (g) {
@@ -90,9 +99,31 @@
         target: Math.max(0, g.target),
         saved: Math.max(0, num(g.saved, 0)),
         months: Math.min(600, Math.max(1, Math.round(num(g.months, 12)))),
-        start: /^\d{4}-\d{2}$/.test(g.start) ? g.start : monthKey(new Date())
+        start: isMonthKey(g.start) ? g.start : monthKey(new Date()),
+        deposits: Array.isArray(g.deposits) ? g.deposits.filter(function (d) {
+          return d && isMonthKey(d.m) && typeof d.amount === 'number' && d.amount > 0;
+        }).map(function (d) { return { m: d.m, amount: d.amount }; }) : []
       };
     }) : [];
+    out.incomes = Array.isArray(data.incomes) ? data.incomes.filter(function (i) {
+      return i && typeof i.name === 'string' && typeof i.amount === 'number' && isMonthKey(i.month);
+    }).map(function (i) {
+      return { id: String(i.id || uid()), name: i.name.slice(0, 40), amount: Math.max(0, i.amount), month: i.month };
+    }) : [];
+    out.expenses = Array.isArray(data.expenses) ? data.expenses.filter(function (x) {
+      return x && typeof x.cat === 'string' && typeof x.amount === 'number' && x.amount > 0 && isIsoDate(x.date);
+    }).map(function (x) {
+      return { id: String(x.id || uid()), cat: x.cat, amount: x.amount, date: x.date, note: typeof x.note === 'string' ? x.note.slice(0, 60) : '' };
+    }) : [];
+    if (data.history && typeof data.history === 'object') {
+      Object.keys(data.history).forEach(function (k) {
+        var h = data.history[k];
+        if (!isMonthKey(k) || !h || typeof h !== 'object') return;
+        out.history[k] = { income: num(h.income, 0), saved: num(h.saved, 0), subs: num(h.subs, 0), cats: num(h.cats, 0), free: num(h.free, 0) };
+      });
+    }
+    var meta = data.meta || {};
+    ['since', 'lastExport', 'backupSnooze'].forEach(function (k) { out.meta[k] = isIsoDate(meta[k]) ? meta[k] : null; });
     var st = data.settings || {};
     out.settings.theme = ['system', 'light', 'dark'].indexOf(st.theme) >= 0 ? st.theme : 'system';
     out.settings.homeCount = st.homeCount === 5 ? 5 : 3;
@@ -116,11 +147,32 @@
   }
 
   function save() {
+    if (!state.meta.since) state.meta.since = iso(today());
+    snapshot();
     try {
       localStorage.setItem(STORE_KEY, JSON.stringify(state));
     } catch (e) {
       toast("Impossible d'enregistrer sur cet appareil");
     }
+  }
+
+  function isIsoDate(v) { return typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v); }
+
+  function isMonthKey(v) { return typeof v === 'string' && /^\d{4}-\d{2}$/.test(v); }
+
+  // Garde une photo du mois en cours (les mois passés restent figés), et oublie ce qui a plus de trois ans.
+  function snapshot() {
+    var t = today();
+    if (state.salary > 0) {
+      var tt = totals();
+      var r = function (n) { return Math.round(n * 100) / 100; };
+      state.history[monthKey(t)] = { income: r(tt.income), saved: r(state.savings + tt.goals), subs: r(tt.subs), cats: r(tt.cats), free: r(tt.free) };
+    }
+    var oldest = monthKey(new Date(t.getFullYear() - 3, t.getMonth(), 1));
+    Object.keys(state.history).forEach(function (k) { if (k < oldest) delete state.history[k]; });
+    var oldDay = iso(new Date(t.getFullYear() - 1, t.getMonth() - 1, 1));
+    state.expenses = state.expenses.filter(function (x) { return x.date >= oldDay; });
+    state.incomes = state.incomes.filter(function (i) { return i.month >= oldDay.slice(0, 7); });
   }
 
   // Seules les images recadrées par Finy (JPEG ou PNG en base64) sont acceptées.
@@ -195,8 +247,14 @@
 
   function diffDays(a, b) { return Math.round((a - b) / 86400000); }
 
-  // Prochain prélèvement d'un abonnement à partir d'une date (mensuel ou annuel).
+  function parseIso(s) { return new Date(+s.slice(0, 4), +s.slice(5, 7) - 1, +s.slice(8, 10)); }
+
+  // Essai gratuit en cours : rien n'est prélevé avant la fin de l'essai.
+  function inTrial(s) { return !!s.trialEnd && parseIso(s.trialEnd) > today(); }
+
+  // Prochain prélèvement d'un abonnement à partir d'une date (mensuel ou annuel), après l'essai gratuit.
   function nextDate(s, from) {
+    if (s.trialEnd && parseIso(s.trialEnd) > from) from = parseIso(s.trialEnd);
     var y = from.getFullYear();
     if (s.frequency === 'year') {
       var a = onDay(y, s.month, s.day);
@@ -206,22 +264,26 @@
     return d < from ? onDay(y, from.getMonth() + 1, s.day) : d;
   }
 
-  // L'abonnement est-il prélevé pendant ce mois ?
-  function chargedIn(s, m) { return s.frequency !== 'year' || s.month === m; }
-
-  // Coût ramené au mois : un abonnement annuel compte pour 1/12 chaque mois.
-  function monthlyCost(s) { return s.frequency === 'year' ? s.amount / 12 : s.amount; }
+  // Date du prélèvement pendant ce mois, ou null (pas ce mois-ci, en pause ou encore en essai).
+  function chargeIn(s, y, m) {
+    if (s.paused || (s.frequency === 'year' && s.month !== m)) return null;
+    var d = onDay(y, m, s.day);
+    return s.trialEnd && d < parseIso(s.trialEnd) ? null : d;
+  }
 
   // Coût compté pour le mois en cours, selon le réglage :
   // « actual » = ce qui est vraiment prélevé ce mois-ci, « smooth » = annuels lissés sur 12 mois.
   function costThisMonth(s) {
-    if (s.frequency !== 'year') return s.amount;
-    if (state.settings.annualMode === 'smooth') return s.amount / 12;
-    return s.month === today().getMonth() ? s.amount : 0;
+    var t = today();
+    if (s.paused) return 0;
+    if (s.frequency === 'year' && state.settings.annualMode === 'smooth') {
+      return s.trialEnd && parseIso(s.trialEnd) > onDay(t.getFullYear(), t.getMonth(), 31) ? 0 : s.amount / 12;
+    }
+    return chargeIn(s, t.getFullYear(), t.getMonth()) ? s.amount : 0;
   }
 
   function yearTotal() {
-    return state.subs.reduce(function (a, s) { return a + (s.frequency === 'year' ? s.amount : s.amount * 12); }, 0);
+    return state.subs.reduce(function (a, s) { return a + (s.paused ? 0 : s.frequency === 'year' ? s.amount : s.amount * 12); }, 0);
   }
 
   // Prochain abonnement annuel qui ne tombe pas ce mois-ci (pour prévenir à l'avance).
@@ -250,17 +312,25 @@
   // ---------- Calculs ----------
 
   // Objectif d'épargne : la durée part du mois où il a été créé (ou modifié pour la dernière fois).
+  // Le montant du mois est calculé sur ce qui était de côté au début du mois : un versement ne le fait pas baisser.
   function goalPlan(g) {
     var t = today();
     var y = parseInt(g.start.slice(0, 4), 10);
     var m = parseInt(g.start.slice(5, 7), 10) - 1;
     var elapsed = (t.getFullYear() - y) * 12 + (t.getMonth() - m);
     var left = Math.max(1, g.months - Math.max(0, elapsed));
-    var missing = Math.max(0, g.target - g.saved);
+    var k = monthKey(t);
+    var paid = g.deposits.reduce(function (a, d) { return a + (d.m === k ? d.amount : 0); }, 0);
+    var before = Math.max(0, g.saved - paid);
+    var missing = Math.max(0, g.target - before);
+    var monthly = missing > 0 ? Math.ceil(missing / left * 100) / 100 : 0;
     return {
       left: left,
-      missing: missing,
-      monthly: missing > 0 ? Math.ceil(missing / left * 100) / 100 : 0,
+      missing: Math.max(0, g.target - g.saved),
+      done: g.saved >= g.target,
+      monthly: monthly,
+      paid: paid,
+      toGo: Math.max(0, Math.min(monthly - paid, g.target - g.saved)),
       progress: g.target > 0 ? Math.min(1, g.saved / g.target) : 1,
       end: new Date(y, m + g.months, 1)
     };
@@ -275,24 +345,47 @@
     return months + ' mois';
   }
 
-  function totals() {
-    var subs = state.subs.reduce(function (a, s) { return a + costThisMonth(s); }, 0);
-    var cats = state.categories.reduce(function (a, c) { return a + c.amount; }, 0);
+  // Revenus en plus du salaire (prime, remboursement…), pour le mois en cours seulement.
+  function extrasThisMonth() {
+    var k = monthKey(today());
+    return state.incomes.filter(function (i) { return i.month === k; });
+  }
+
+  // Ce qui a été dépensé ce mois-ci dans une catégorie.
+  function spentIn(catId) {
+    var k = monthKey(today());
+    return state.expenses.reduce(function (a, x) { return a + (x.cat === catId && x.date.slice(0, 7) === k ? x.amount : 0); }, 0);
+  }
+
+  // Une catégorie réserve son budget ; si on le dépasse, le dépassement est retiré aussi.
+  function catCost(c) { return Math.max(c.amount, spentIn(c.id)); }
+
+  // `o` permet de simuler un autre salaire, une autre épargne ou d'autres abonnements (mode « Et si… »).
+  function totals(o) {
+    o = o || {};
+    var salary = o.salary != null ? o.salary : state.salary;
+    var savings = o.savings != null ? o.savings : state.savings;
+    var extras = extrasThisMonth().reduce(function (a, i) { return a + i.amount; }, 0);
+    var subs = (o.subs || state.subs).reduce(function (a, s) { return a + costThisMonth(s); }, 0);
+    var cats = state.categories.reduce(function (a, c) { return a + catCost(c); }, 0);
     var goals = goalsMonthly();
-    var rest = state.salary - state.savings - goals - subs;
+    var income = salary + extras;
+    var rest = income - savings - goals - subs;
     var free = rest - cats;
     // Ce qui est vraiment libre (catégories déjà réservées), réparti sur les jours du mois en cours.
     var t = today();
-    return { subs: subs, cats: cats, goals: goals, rest: rest, free: free, weekly: Math.max(0, free) * 7 / daysIn(t.getFullYear(), t.getMonth()) };
+    return { income: income, extras: extras, subs: subs, cats: cats, goals: goals, rest: rest, free: free, weekly: Math.max(0, free) * 7 / daysIn(t.getFullYear(), t.getMonth()) };
   }
 
   function yearlyCount() {
-    return state.subs.filter(function (s) { return s.frequency === 'year'; }).length;
+    return state.subs.filter(function (s) { return s.frequency === 'year' && !s.paused; }).length;
   }
 
-  function upcoming() {
+  // Les abonnements en pause n'ont pas de date : ils passent en fin de liste, seulement si on les demande.
+  function upcoming(withPaused) {
     var t = today();
-    return state.subs.map(function (s) {
+    return state.subs.filter(function (s) { return withPaused || !s.paused; }).map(function (s) {
+      if (s.paused) return { sub: s, date: null, diff: Infinity };
       var d = nextDate(s, t);
       return { sub: s, date: d, diff: diffDays(d, t) };
     }).sort(function (a, b) { return a.diff - b.diff || a.sub.name.localeCompare(b.sub.name); });
@@ -309,9 +402,10 @@
 
   function subRow(u, showCategory) {
     var s = u.sub;
-    var extra = (showCategory ? esc(s.category) + ' · ' : '') + shortDate.format(u.date) +
-      (s.frequency === 'year' && state.settings.annualMode === 'smooth' ? ' · ≈ ' + euro(s.amount / 12) + '/mois' : '');
-    return '<button type="button" class="row tall" data-action="edit-sub" data-id="' + esc(s.id) + '">' +
+    var when = s.paused ? 'En pause' : inTrial(s) ? 'Essai jusqu\'au ' + shortDate.format(parseIso(s.trialEnd)) : shortDate.format(u.date);
+    var extra = (showCategory ? esc(s.category) + ' · ' : '') + when +
+      (!s.paused && s.frequency === 'year' && state.settings.annualMode === 'smooth' ? ' · ≈ ' + euro(s.amount / 12) + '/mois' : '');
+    return '<button type="button" class="row tall' + (s.paused ? ' paused' : '') + '" data-action="edit-sub" data-id="' + esc(s.id) + '">' +
       subTile(s) +
       '<span class="row-main"><span class="row-title">' + esc(s.name) + '</span>' + metaLine(u.diff, extra) + '</span>' +
       '<span class="row-amount">' + priceLabel(s) + '</span></button>';
@@ -410,13 +504,16 @@
         '<p class="muted">Finy calcule ensuite ce qu\'il te reste chaque mois, après ton épargne et tes abonnements.</p>' +
         '<button type="button" class="btn btn-primary btn-block" data-action="edit-salary" style="margin-top:16px">Indiquer mon salaire</button></section>';
     } else {
-      html += '<section class="hero a-hero" aria-label="Ce qu\'il te reste"><p class="label">Il te reste ce mois-ci</p>' + hero(t.rest, 'rest') +
-        '<p class="pill-info"><span class="strong">' + euro(t.weekly) + '</span><span class="muted">pour te faire plaisir cette semaine</span></p></section>';
+      // Le montant mis en avant est ce qui est vraiment libre : catégories comprises.
+      html += '<section class="hero a-hero" aria-label="Ce qu\'il te reste"><p class="label">Il te reste ce mois-ci</p>' + hero(t.free, 'free') +
+        '<p class="caption">Après ton épargne, tes objectifs, tes abonnements' + (state.categories.length ? ' et tes catégories' : '') + '</p>' +
+        '<p class="pill-info"><span class="strong">' + euro(t.weekly) + '</span><span class="muted">pour te faire plaisir cette semaine</span></p>' +
+        backupNotice() + '</section>';
     }
 
     html += '<section class="actions a-actions" aria-label="Actions rapides">' +
-      action('add-sub', 'plus', 'Ajouter') + action('edit-salary', 'wallet', 'Salaire') +
-      action('add-cat', 'grid', 'Catégorie') + action('go-reminders', 'bell', 'Rappels') + '</section>';
+      action('add-exp', 'receipt', 'Dépense') + action('add-sub', 'plus', 'Abonnement') +
+      action('add-income', 'trend', 'Revenu') + action('whatif', 'sliders', 'Et si…') + '</section>';
 
     if (state.salary > 0) {
       var parts = [
@@ -426,24 +523,25 @@
       ];
       if (t.goals <= 0) parts.splice(1, 1);
       state.categories.forEach(function (c, i) {
-        parts.push({ name: c.name, value: c.amount, color: CAT_PALETTE[i % CAT_PALETTE.length], id: c.id });
+        parts.push({ name: c.name, value: catCost(c), color: CAT_PALETTE[i % CAT_PALETTE.length], cat: c });
       });
       var bar = parts.concat([{ name: 'Libre', value: Math.max(0, t.free), color: 'var(--border)' }]);
       var aria = bar.filter(function (p) { return p.value > 0; }).map(function (p) { return p.name + ' ' + euro(p.value); }).join(', ');
 
       html += '<section class="section a-main"><div class="section-head"><h2 class="heading">Répartition</h2>' +
-        '<span class="label">Salaire ' + euro(state.salary) + '</span></div>' + splitBar(bar, aria) + '<div class="group">' +
+        '<button type="button" class="link-btn label" data-action="edit-salary">' + (t.extras > 0 ? 'Revenus ' + euro(t.income) : 'Salaire ' + euro(state.salary)) + '</button></div>' +
+        splitBar(bar, aria) + '<div class="group">' +
         parts.map(function (p) {
+          if (p.cat) return catRow(p.cat, p.color);
           var inner = '<span class="dot" style="--c:' + p.color + '" aria-hidden="true"></span><span class="row-main"><span class="row-title">' + esc(p.name) + '</span></span><span class="row-amount">' + euro(p.value) + '</span>';
           if (p.goals) return '<a class="row" href="' + p.href + '">' + inner + '</a>' + goalRows();
-          return p.href
-            ? '<a class="row" href="' + p.href + '">' + inner + '</a>'
-            : '<button type="button" class="row" data-action="edit-cat" data-id="' + esc(p.id) + '">' + inner + '</button>';
+          return '<a class="row" href="' + p.href + '">' + inner + '</a>';
         }).join('') +
         '<div class="row"><span class="dot" style="--c:var(--border)" aria-hidden="true"></span><span class="row-main"><span class="row-title strong">Libre</span></span>' +
         '<span class="row-amount"' + (t.free < 0 ? ' style="color:var(--danger)"' : '') + '>' + euro(t.free) + '</span></div>' +
         '<button type="button" class="row row-link" data-action="add-cat">' + icon('plus') + 'Ajouter une catégorie</button></div>' +
-        (t.rest < 0 ? '<p class="alert">Tes dépenses fixes dépassent ton salaire. Baisse ton épargne, allonge un objectif ou retire un abonnement.</p>' : '') +
+        (t.rest < 0 ? '<p class="alert">Tes dépenses fixes dépassent tes revenus. Baisse ton épargne, allonge un objectif ou mets un abonnement en pause.</p>'
+          : t.free < 0 ? '<p class="alert">Tes catégories dépassent ce qu\'il te reste ce mois-ci.</p>' : '') +
         '</section>';
     }
 
@@ -452,7 +550,64 @@
       (next.length ? next.map(function (u) { return subRow(u, false); }).join('')
         : '<div class="empty"><span>Aucun abonnement pour l\'instant.</span><button type="button" class="link-btn" data-action="add-sub">Ajouter mon premier abonnement</button></div>') +
       '</div></section>';
-    return html;
+    return html + historySection();
+  }
+
+  // Catégorie : budget du mois, avec ce qui a déjà été dépensé.
+  function catRow(c, color) {
+    var spent = spentIn(c.id);
+    var over = spent > c.amount;
+    var meta = spent > 0
+      ? (over ? '<span class="soon">Dépassé de ' + euro(spent - c.amount) + '</span>' : '<span>Reste ' + euro(c.amount - spent) + '</span>')
+      : '<span>Rien de dépensé ce mois-ci</span>';
+    var pct = c.amount > 0 ? Math.min(1, spent / c.amount) : (spent > 0 ? 1 : 0);
+    return '<button type="button" class="row tall goal" data-action="edit-cat" data-id="' + esc(c.id) + '">' +
+      '<span class="dot" style="--c:' + color + '" aria-hidden="true"></span>' +
+      '<span class="row-main"><span class="row-title">' + esc(c.name) + '</span><span class="row-meta">' + meta + '</span>' +
+      (spent > 0 ? '<span class="goal-bar' + (over ? ' over' : '') + '" aria-hidden="true"><span style="width:' + (pct * 100).toFixed(1) + '%"></span></span>' : '') +
+      '</span><span class="row-amount">' + (spent > 0 ? euro(spent) + '<small class="per"> / ' + euro(c.amount) + '</small>' : euro(c.amount)) + '</span></button>';
+  }
+
+  // Rappel d'exporter une sauvegarde : 30 jours après la dernière (ou après la première utilisation).
+  function backupNotice() {
+    var m = state.meta;
+    if (!state.subs.length && !state.goals.length && !state.categories.length) return '';
+    var t = today();
+    var ref = m.lastExport || m.since;
+    if (!ref || diffDays(t, parseIso(ref)) < 30) return '';
+    if (m.backupSnooze && diffDays(t, parseIso(m.backupSnooze)) < 7) return '';
+    var days = diffDays(t, parseIso(ref));
+    return '<div class="notice" role="status"><span>' + (m.lastExport ? 'Ta dernière sauvegarde date de ' + days + ' jours.' : 'Tu n\'as encore jamais exporté de sauvegarde.') +
+      ' Si Safari est vidé, tes données disparaissent.</span><span class="notice-actions">' +
+      '<button type="button" class="link-btn" data-action="export">Exporter maintenant</button>' +
+      '<button type="button" class="link-btn" style="color:var(--muted)" data-action="backup-later">Plus tard</button></span></div>';
+  }
+
+  // Les 6 derniers mois : ce qui est resté libre, et ce qui a été mis de côté.
+  function historySection() {
+    var t = today();
+    var months = [];
+    for (var i = 5; i >= 0; i--) {
+      var d = new Date(t.getFullYear(), t.getMonth() - i, 1);
+      var h = state.history[monthKey(d)];
+      if (h) months.push({ d: d, h: h, now: i === 0 });
+    }
+    if (months.length < 2) return '';
+    var max = months.reduce(function (a, x) { return Math.max(a, Math.abs(x.h.free)); }, 0) || 1;
+    var short = new Intl.DateTimeFormat('fr-FR', { month: 'short' });
+    var prev = months[months.length - 2].h.free, cur = months[months.length - 1].h.free;
+    var delta = cur - prev;
+    return '<section class="section a-hist"><div class="section-head"><h2 class="heading">Mois par mois</h2><span class="label">Libre</span></div>' +
+      '<div class="group hist"><div class="bars" role="img" aria-label="' + esc(months.map(function (x) { return cap(monthName.format(x.d)) + ' ' + euro(x.h.free); }).join(', ')) + '">' +
+      months.map(function (x) {
+        var hgt = Math.max(2, Math.abs(x.h.free) / max * 100);
+        var tip = cap(monthName.format(x.d)) + ' : ' + euro(x.h.free) + ' libre, ' + euro(x.h.saved) + ' mis de côté';
+        return '<div class="bar' + (x.now ? ' now' : '') + (x.h.free < 0 ? ' neg' : '') + '" title="' + esc(tip) + '">' +
+          '<span class="bar-val">' + (x.now ? euro(x.h.free) : '') + '</span><span class="bar-col"><i style="height:' + hgt.toFixed(1) + '%"></i></span>' +
+          '<span class="bar-m">' + esc(short.format(x.d).replace('.', '')) + '</span></div>';
+      }).join('') + '</div>' +
+      '<p class="caption hist-note">' + (Math.abs(delta) < 1 ? 'Comme le mois dernier.' : (delta > 0 ? '+ ' : '− ') + euro(Math.abs(delta)) + ' par rapport au mois dernier.') +
+      ' Mis de côté ce mois-ci : ' + euro(months[months.length - 1].h.saved) + '.</p></div></section>';
   }
 
   // Détail des objectifs en cours, sous la ligne « Objectifs ».
@@ -478,13 +633,15 @@
 
     var smooth = state.settings.annualMode === 'smooth';
     var yc = yearlyCount();
-    var smoothPart = state.subs.filter(function (s) { return s.frequency === 'year'; }).reduce(function (a, s) { return a + s.amount / 12; }, 0);
+    var smoothPart = state.subs.filter(function (s) { return s.frequency === 'year' && !s.paused; }).reduce(function (a, s) { return a + s.amount / 12; }, 0);
+    var pausedCount = state.subs.filter(function (s) { return s.paused; }).length;
     var monthWord = new Intl.DateTimeFormat('fr-FR', { month: 'long' }).format(today());
     html += '<section class="hero a-hero" aria-label="Total">' +
       (yc ? '<p class="label">' + (smooth ? 'Par mois, annuels lissés' : 'Prélevé en ' + monthWord) + '</p>' : '') +
       '<p class="amount-big"><span data-count="subs" data-kind="big" data-value="' + t.subs + '">' + euro(t.subs) + '</span><small>/mois</small></p>' +
       '<p class="label" style="font-weight:400">' + euro(yearTotal()) + ' sur un an · ' + state.subs.length + ' abonnement' + (state.subs.length > 1 ? 's' : '') +
-      (yc && smooth ? ', dont ' + euro(smoothPart) + ' pour ' + yc + ' annuel' + (yc > 1 ? 's' : '') : '') + '</p>';
+      (yc && smooth ? ', dont ' + euro(smoothPart) + ' pour ' + yc + ' annuel' + (yc > 1 ? 's' : '') : '') +
+      (pausedCount ? ' · ' + pausedCount + ' en pause' : '') + '</p>';
     if (yc) {
       var nx = nextYearly();
       html += segmented('annualMode', [['actual', 'Ce mois-ci'], ['smooth', 'Lissé']], state.settings.annualMode, 'Compter les abonnements annuels', true) +
@@ -538,7 +695,7 @@
     var list = document.getElementById('abos-list');
     if (!list) return;
     var q = ui.abosQuery.trim().toLowerCase();
-    var items = upcoming().filter(function (u) {
+    var items = upcoming(true).filter(function (u) {
       return (ui.abosFilter === 'Tous' || u.sub.category === ui.abosFilter) && (!q || u.sub.name.toLowerCase().indexOf(q) >= 0);
     });
     document.getElementById('abos-title').textContent = ui.abosFilter === 'Tous' ? 'Tous les abonnements' : ui.abosFilter;
@@ -557,10 +714,17 @@
     if (ui.calSel === null && ui.calOffset === 0) ui.calSel = t.getDate();
 
     var byDay = {};
-    var inMonth = state.subs.filter(function (s) { return chargedIn(s, m); });
+    var inMonth = state.subs.filter(function (s) { return chargeIn(s, y, m); });
     inMonth.forEach(function (s) {
       var d = Math.min(s.day, n);
       (byDay[d] = byDay[d] || []).push(s);
+    });
+    // Fins d'essai gratuit : à repérer dans le calendrier pour penser à résilier.
+    var trials = {};
+    state.subs.forEach(function (s) {
+      if (s.paused || !s.trialEnd) return;
+      var e = parseIso(s.trialEnd);
+      if (e.getFullYear() === y && e.getMonth() === m && e >= t) (trials[e.getDate()] = trials[e.getDate()] || []).push(s);
     });
     var monthTotal = inMonth.reduce(function (a, s) { return a + s.amount; }, 0);
     var left = inMonth.filter(function (s) { return onDay(y, m, s.day) >= t; }).reduce(function (a, s) { return a + s.amount; }, 0);
@@ -585,18 +749,27 @@
       var date = new Date(y, m, day);
       var diff = diffDays(date, t);
       var has = !!byDay[day];
+      var trial = !!trials[day];
       var cls = ['day'];
-      if (has) cls.push('has');
+      if (has || trial) cls.push('has');
+      if (trial) cls.push('trial-day');
       if (diff < 0) cls.push('past');
       if (has && diff >= 0 && diff <= state.settings.alertDays) cls.push('soon-day');
       if (diff === 0) cls.push('today');
-      html += '<button type="button" class="' + cls.join(' ') + '" data-action="cal-day" data-day="' + day + '" aria-pressed="' + (day === ui.calSel) + '" aria-label="' + day + ' ' + cap(new Intl.DateTimeFormat('fr-FR', { month: 'long' }).format(date)) + (has ? ', prélèvement prévu' : '') + '"><span>' + day + '</span><i aria-hidden="true"></i></button>';
+      html += '<button type="button" class="' + cls.join(' ') + '" data-action="cal-day" data-day="' + day + '" aria-pressed="' + (day === ui.calSel) + '" aria-label="' + day + ' ' + cap(new Intl.DateTimeFormat('fr-FR', { month: 'long' }).format(date)) + (has ? ', prélèvement prévu' : '') + (trial ? ', fin d\'essai gratuit' : '') + '"><span>' + day + '</span><i aria-hidden="true"></i></button>';
     }
-    html += '</div><div class="cal-legend"><span><i style="--c:var(--accent)"></i>À venir</span><span><i style="--c:var(--warning)"></i>Bientôt</span><span><i style="--c:var(--chart-2)"></i>Déjà prélevé</span></div></section>';
+    html += '</div><div class="cal-legend"><span><i style="--c:var(--accent)"></i>À venir</span><span><i style="--c:var(--warning)"></i>Bientôt</span><span><i style="--c:var(--chart-2)"></i>Déjà prélevé</span>' +
+      (Object.keys(trials).length ? '<span><i class="ring"></i>Fin d\'essai</span>' : '') + '</div></section>';
 
     var sel = ui.calSel && ui.calSel <= n ? ui.calSel : null;
     html += '<section class="section a-side"><h2 class="heading">' + (sel ? cap(longDay.format(new Date(y, m, sel))) : 'Choisis un jour') + '</h2><div class="group">';
     var items = sel ? (byDay[sel] || []) : [];
+    var ends = sel ? (trials[sel] || []) : [];
+    html += ends.map(function (s) {
+      return '<button type="button" class="row tall" data-action="edit-sub" data-id="' + esc(s.id) + '">' + subTile(s) +
+        '<span class="row-main"><span class="row-title">' + esc(s.name) + '</span><span class="row-meta"><span class="soon">Fin de l\'essai gratuit</span></span></span>' +
+        '<span class="row-amount">' + priceLabel(s) + '</span></button>';
+    }).join('');
     if (items.length) {
       var d = diffDays(new Date(y, m, sel), t);
       html += items.map(function (s) {
@@ -605,7 +778,7 @@
           '<span class="row-main"><span class="row-title">' + esc(s.name) + '</span><span class="row-meta"><span class="' + (soon ? 'soon' : '') + '">' + relative(d) + '</span></span></span>' +
           '<span class="row-amount">' + priceLabel(s) + '</span></button>';
       }).join('');
-    } else {
+    } else if (!ends.length) {
       var nx = upcoming()[0];
       html += '<div class="empty"><span>Aucun prélèvement ce jour-là.</span>' +
         (nx ? '<span class="caption">Prochain : ' + esc(nx.sub.name) + ', le ' + shortDate.format(nx.date) + ' · ' + euro(nx.sub.amount) + '</span>' : '') + '</div>';
@@ -631,7 +804,7 @@
     }
     html += '</section><section class="section a-goals" aria-label="Objectifs d\'épargne"><div class="section-head"><h2 class="heading">Objectifs</h2>' +
       '<button type="button" class="link-btn" data-action="add-goal">' + icon('plus') + 'Nouvel objectif</button></div><div id="sv-goals"></div></section>';
-    html += '<section class="section a-side"><h2 class="heading">Ce qu\'il te reste</h2><div class="group" id="sv-calc"></div><p class="alert" id="sv-alert" hidden>Avec ce montant, tes dépenses fixes dépassent ton salaire. Baisse un peu ton épargne ou allonge un objectif.</p></section>';
+    html += '<section class="section a-side"><h2 class="heading">Ce qu\'il te reste</h2><div class="group" id="sv-calc"></div><p class="alert" id="sv-alert" hidden>Avec ce montant, tes dépenses dépassent tes revenus du mois. Baisse un peu ton épargne ou allonge un objectif.</p></section>';
     return html;
   }
 
@@ -653,12 +826,18 @@
     }
     document.getElementById('sv-calc').innerHTML =
       calcRow('Salaire', euro(state.salary), 'var(--ink)') +
+      extrasThisMonth().map(function (i) {
+        return '<button type="button" class="row" data-action="edit-income" data-id="' + esc(i.id) + '"><span class="dot" style="--c:var(--ink)" aria-hidden="true"></span>' +
+          '<span class="row-main"><span class="muted">' + esc(i.name) + ' (ce mois-ci)</span></span><span class="row-amount">+ ' + euro(i.amount) + '</span></button>';
+      }).join('') +
+      '<button type="button" class="row row-link row-sub-link" data-action="add-income">' + icon('plus') + 'Ajouter un revenu ce mois-ci</button>' +
       calcRow('Épargne', '− ' + euro(state.savings), 'var(--accent)') +
       (t.goals > 0 ? calcRow('Objectifs', '− ' + euro(t.goals), 'var(--chart-4)') : '') +
       calcRow(yearlyCount() ? (state.settings.annualMode === 'smooth' ? 'Abonnements (annuels lissés)' : 'Abonnements (ce mois-ci)') : 'Abonnements', '− ' + euro(t.subs), 'var(--chart-2)') +
-      '<div class="row" style="min-height:60px"><span class="row-main"><span class="strong">Il te reste</span></span><span class="row-amount" style="font-size:20px;line-height:26px;font-weight:700' + (t.rest < 0 ? ';color:var(--danger)' : '') + '">' + euro(t.rest) + '</span></div>' +
-      '<div class="row"><span class="row-main"><span class="muted">Pour te faire plaisir chaque semaine</span></span><span class="row-amount">' + euro(t.weekly) + '</span></div>';
-    document.getElementById('sv-alert').hidden = !(state.salary > 0 && t.rest < 0);
+      (t.cats > 0 ? calcRow('Catégories', '− ' + euro(t.cats), 'var(--chart-3)') : '') +
+      '<div class="row" style="min-height:60px"><span class="row-main"><span class="strong">Il te reste</span></span><span class="row-amount" style="font-size:20px;line-height:26px;font-weight:700' + (t.free < 0 ? ';color:var(--danger)' : '') + '">' + euro(t.free) + '</span></div>' +
+      '<div class="row"><span class="row-main"><span class="muted">Pour te faire plaisir cette semaine</span></span><span class="row-amount">' + euro(t.weekly) + '</span></div>';
+    document.getElementById('sv-alert').hidden = !(state.salary > 0 && t.free < 0);
     fillGoals();
   }
 
@@ -673,12 +852,20 @@
     var need = goalsMonthly();
     var html = '<div class="group">' + state.goals.map(function (g) {
       var p = goalPlan(g);
-      var meta = p.missing > 0 ? 'Encore ' + durationLabel(p.left) + ' · ' + monthName.format(p.end) : 'Objectif atteint';
+      var meta = !p.done ? 'Encore ' + durationLabel(p.left) + ' · ' + monthName.format(p.end) : 'Objectif atteint';
+      // Où en est le versement du mois : à jour, ou ce qu'il manque encore.
+      var status = p.done || p.monthly <= 0 ? ''
+        : p.toGo <= 0 ? '<span class="ok">✓ À jour ce mois-ci</span>'
+        : p.paid > 0 ? '<span>Versé ce mois-ci : ' + euro(p.paid) + ' sur ' + euro(p.monthly) + '</span>'
+        : '<span>Rien versé ce mois-ci</span>';
       return '<button type="button" class="row tall goal" data-action="edit-goal" data-id="' + esc(g.id) + '">' +
         '<span class="row-main"><span class="row-title">' + esc(g.name) + '</span><span class="row-meta"><span>' + meta + '</span></span>' +
         '<span class="goal-bar" aria-hidden="true"><span style="width:' + (p.progress * 100).toFixed(1) + '%"></span></span>' +
-        '<span class="row-meta"><span>' + euro(g.saved) + ' sur ' + euro(g.target) + '</span></span></span>' +
-        '<span class="row-amount">' + (p.missing > 0 ? euro(p.monthly) + '<small class="per">/mois</small>' : '✓') + '</span></button>';
+        '<span class="row-meta"><span>' + euro(g.saved) + ' sur ' + euro(g.target) + '</span></span>' +
+        (status ? '<span class="row-meta">' + status + '</span>' : '') + '</span>' +
+        '<span class="row-amount">' + (!p.done ? euro(p.monthly) + '<small class="per">/mois</small>' : '✓') + '</span></button>' +
+        (!p.done ? '<button type="button" class="row row-link row-sub-link" data-action="goal-deposit" data-id="' + esc(g.id) + '">' + icon('plus') +
+          'Ajouter un versement' + (p.toGo > 0 ? '<span class="muted" style="font-weight:400"> · encore ' + euro(p.toGo) + ' ce mois-ci</span>' : '') + '</button>' : '');
     }).join('') + '</div>';
     if (need > 0) {
       html += '<p class="caption">' + (state.goals.length > 1 ? 'Tes objectifs demandent ' : 'Cet objectif demande ') + '<span class="strong" style="color:var(--ink)">' + euro(need) + ' par mois</span>' +
@@ -703,13 +890,77 @@
     openSheet(isNew ? 'Nouvel objectif' : 'Modifier l\'objectif', body, isNew ? 'Créer l\'objectif' : 'Enregistrer', function (data) {
       var r = readGoalForm(data);
       if (typeof r === 'string') return r;
-      var item = { id: isNew ? uid() : id, name: r.name, target: r.target, saved: r.saved, months: r.months, start: monthKey(today()) };
+      var item = { id: isNew ? uid() : id, name: r.name, target: r.target, saved: r.saved, months: r.months, start: monthKey(today()), deposits: isNew ? [] : g.deposits };
       if (isNew) state.goals.push(item);
       else state.goals = state.goals.map(function (x) { return x.id === id ? item : x; });
       toast(isNew ? 'Objectif créé' : 'Objectif modifié');
     }, del);
     sheetForm.dataset.kind = 'goal';
     previewGoal();
+  }
+
+  // Un versement fait avancer l'objectif sans toucher à son montant mensuel.
+  function depositGoal(id) {
+    var g = state.goals.filter(function (x) { return x.id === id; })[0];
+    if (!g) return;
+    var p = goalPlan(g);
+    var body = '<p class="caption">' + esc(g.name) + ' : ' + euro(g.saved) + ' sur ' + euro(g.target) +
+      (p.toGo > 0 ? '. Il reste ' + euro(p.toGo) + ' à verser ce mois-ci.' : '. Tu es à jour ce mois-ci.') + '</p>' +
+      amountField('amount', 'Montant versé (€)', p.toGo);
+    openSheet('Ajouter un versement', body, 'Ajouter', function (data) {
+      var n = parseAmount(data.amount);
+      if (n === null || n <= 0) return 'Indique un montant, par exemple 50.';
+      g.saved = Math.round((g.saved + n) * 100) / 100;
+      g.deposits.push({ m: monthKey(today()), amount: n });
+      if (g.deposits.length > 120) g.deposits = g.deposits.slice(-120);
+      toast(g.saved >= g.target ? 'Objectif atteint, bravo !' : 'Versement ajouté');
+    });
+  }
+
+  // Dépense rapide dans une catégorie (courses, essence…).
+  function editExpense(catId) {
+    if (!state.categories.length) {
+      toast('Crée d\'abord une catégorie, par exemple Alimentation');
+      return editCat(null);
+    }
+    var last = catId || (state.expenses.length ? state.expenses[state.expenses.length - 1].cat : null);
+    var body = amountField('amount', 'Montant (€)', 0) +
+      '<label class="field"><span>Catégorie</span><select class="input" name="cat">' + state.categories.map(function (c) {
+        var left = c.amount - spentIn(c.id);
+        return '<option value="' + esc(c.id) + '"' + (c.id === last ? ' selected' : '') + '>' + esc(c.name) + ' · reste ' + euro(left) + '</option>';
+      }).join('') + '</select></label>' +
+      '<div class="field-row"><label class="field"><span>Note (facultatif)</span><input class="input" name="note" type="text" maxlength="60" autocomplete="off" placeholder="Courses, plein…"></label>' +
+      '<label class="field"><span>Date</span><input class="input" name="date" type="date" value="' + iso(today()) + '" max="' + iso(today()) + '"></label></div>';
+    openSheet('Nouvelle dépense', body, 'Ajouter', function (data) {
+      var n = parseAmount(data.amount);
+      if (n === null || n <= 0) return 'Indique un montant, par exemple 32,50.';
+      var date = isIsoDate(data.date) ? data.date : iso(today());
+      if (date > iso(today())) return 'Choisis une date passée ou aujourd\'hui.';
+      state.expenses.push({ id: uid(), cat: data.cat, amount: n, date: date, note: (data.note || '').trim().slice(0, 60) });
+      var c = state.categories.filter(function (x) { return x.id === data.cat; })[0];
+      var left = c ? c.amount - spentIn(c.id) : 0;
+      toast(c && date.slice(0, 7) === monthKey(today()) ? (left >= 0 ? 'Reste ' + euro(left) + ' en ' + c.name : c.name + ' : budget dépassé') : 'Dépense ajoutée');
+    });
+  }
+
+  // Revenu ponctuel, compté seulement pour le mois en cours.
+  function editIncome(id) {
+    var inc = state.incomes.filter(function (x) { return x.id === id; })[0];
+    var isNew = !inc;
+    var body = '<p class="caption">Une prime, un remboursement, un petit boulot… Il s\'ajoute à ton salaire pour ' + monthName.format(today()) + ' seulement.</p>' +
+      '<label class="field"><span>Nom</span><input class="input" name="name" type="text" maxlength="40" autocomplete="off" placeholder="Prime, remboursement…" value="' + esc(inc ? inc.name : '') + '"></label>' +
+      amountField('amount', 'Montant (€)', inc ? inc.amount : 0);
+    var del = isNew ? '' : '<button type="button" class="btn btn-danger btn-block" data-action="delete-income" data-id="' + esc(id) + '">Supprimer ce revenu</button>';
+    openSheet(isNew ? 'Revenu en plus' : 'Modifier le revenu', body, isNew ? 'Ajouter' : 'Enregistrer', function (data) {
+      var name = (data.name || '').trim();
+      var n = parseAmount(data.amount);
+      if (!name) return 'Donne un nom à ce revenu.';
+      if (n === null || n <= 0) return 'Indique un montant, par exemple 200.';
+      var item = { id: isNew ? uid() : id, name: name, amount: n, month: isNew ? monthKey(today()) : inc.month };
+      if (isNew) state.incomes.push(item);
+      else state.incomes = state.incomes.map(function (x) { return x.id === id ? item : x; });
+      toast(isNew ? 'Revenu ajouté' : 'Revenu modifié');
+    }, del);
   }
 
   function readGoalForm(data) {
@@ -877,7 +1128,8 @@
       '<button type="button" class="icon-btn" aria-label="Fermer" data-action="sheet-close">' + icon('close') + '</button></div>' +
       body + '<p class="alert" id="sheet-error" hidden></p>' +
       '<div class="sheet-actions"><button type="submit" class="btn btn-primary btn-block">' + submitLabel + '</button>' + (extra || '') + '</div>';
-    if (typeof sheet.showModal === 'function') sheet.showModal();
+    // Une fenêtre peut en remplacer une autre déjà ouverte (dépense supprimée, import…).
+    if (sheet.open) { /* déjà ouverte */ } else if (typeof sheet.showModal === 'function') sheet.showModal();
     else sheet.setAttribute('open', '');
     var first = sheetForm.querySelector('input, select');
     if (first) setTimeout(function () { first.focus(); }, 50);
@@ -952,7 +1204,13 @@
         return '<option' + (c === s.category ? ' selected' : '') + '>' + esc(c) + '</option>';
       }).join('') + '</select></label>' +
       '<label class="field"><span>Site du service (facultatif)</span><input class="input" name="site" type="text" inputmode="url" autocapitalize="off" autocorrect="off" spellcheck="false" autocomplete="off" placeholder="netflix.com" value="' + esc(s.site || '') + '" data-input="sub-site">' +
-      '<span class="caption">Pour afficher son logo automatiquement. Seul le nom du site est envoyé à DuckDuckGo pour récupérer l\'icône.</span></label>';
+      '<span class="caption">Pour afficher son logo automatiquement. Seul le nom du site est envoyé à DuckDuckGo pour récupérer l\'icône.</span></label>' +
+      '<label class="field"><span>Essai gratuit jusqu\'au (facultatif)</span><input class="input" name="trialEnd" type="date" value="' + esc(s.trialEnd || '') + '">' +
+      '<span class="caption">Rien n\'est compté avant cette date, et les rappels te préviennent pour résilier à temps.</span></label>' +
+      '<div class="field"><span>État</span><div class="segmented" role="radiogroup" aria-label="État de l\'abonnement">' +
+      '<label class="seg-opt"><input type="radio" name="paused" value="no"' + (s.paused ? '' : ' checked') + '><span>Actif</span></label>' +
+      '<label class="seg-opt"><input type="radio" name="paused" value="yes"' + (s.paused ? ' checked' : '') + '><span>En pause</span></label></div>' +
+      '<span class="caption">En pause, il reste dans ta liste mais n\'est plus compté ni rappelé.</span></div>';
     var del = isNew ? '' : '<button type="button" class="btn btn-danger btn-block" data-action="delete-sub" data-id="' + esc(id) + '">Supprimer cet abonnement</button>';
     openSheet(isNew ? 'Nouvel abonnement' : 'Modifier l\'abonnement', body, isNew ? 'Ajouter' : 'Enregistrer', function (data) {
       var name = (data.name || '').trim();
@@ -970,11 +1228,13 @@
         day: parseInt(data.day, 10) || 1,
         frequency: freq,
         month: freq === 'year' ? Math.min(11, Math.max(0, parseInt(data.month, 10) || 0)) : (s.month || 0),
-        category: data.category || 'Autre', site: site, image: sheetDraft.image
+        category: data.category || 'Autre', site: site, image: sheetDraft.image,
+        trialEnd: isIsoDate(data.trialEnd) ? data.trialEnd : '',
+        paused: data.paused === 'yes'
       };
       if (isNew) state.subs.push(item);
       else state.subs = state.subs.map(function (x) { return x.id === id ? item : x; });
-      toast(isNew ? 'Abonnement ajouté' : 'Abonnement modifié');
+      toast(item.paused && !(s.paused) && !isNew ? 'Abonnement mis en pause' : isNew ? 'Abonnement ajouté' : 'Abonnement modifié');
     }, del);
   }
 
@@ -984,7 +1244,19 @@
     c = c || { name: '', amount: 0 };
     var body = '<p class="caption">Une catégorie réserve une part de ton salaire pour une dépense régulière : alimentation, soins, essence…</p>' +
       '<label class="field"><span>Nom</span><input class="input" name="name" type="text" maxlength="40" autocomplete="off" placeholder="Alimentation" value="' + esc(c.name) + '"></label>' +
-      amountField('amount', 'Montant par mois (€)', c.amount);
+      amountField('amount', 'Budget par mois (€)', c.amount);
+    if (!isNew) {
+      // Les dépenses du mois dans cette catégorie, les plus récentes d'abord.
+      var k = monthKey(today());
+      var list = state.expenses.filter(function (x) { return x.cat === id && x.date.slice(0, 7) === k; })
+        .sort(function (a, b) { return a.date < b.date ? 1 : -1; });
+      body += '<div class="field"><span>Dépensé en ' + new Intl.DateTimeFormat('fr-FR', { month: 'long' }).format(today()) + ' : ' + euro(spentIn(id)) + '</span><div class="group">' +
+        list.map(function (x) {
+          return '<div class="row"><span class="row-main"><span class="row-title">' + (x.note ? esc(x.note) : 'Dépense') + '</span><span class="row-meta"><span>' + shortDate.format(parseIso(x.date)) + '</span></span></span>' +
+            '<span class="row-amount">' + euro(x.amount) + '</span><button type="button" class="icon-btn sm" aria-label="Supprimer cette dépense" data-action="delete-exp" data-id="' + esc(x.id) + '" data-cat="' + esc(id) + '">' + icon('close') + '</button></div>';
+        }).join('') +
+        '<button type="button" class="row row-link" data-action="add-exp-in" data-id="' + esc(id) + '">' + icon('plus') + 'Ajouter une dépense</button></div></div>';
+    }
     var del = isNew ? '' : '<button type="button" class="btn btn-danger btn-block" data-action="delete-cat" data-id="' + esc(id) + '">Supprimer cette catégorie</button>';
     openSheet(isNew ? 'Nouvelle catégorie' : 'Modifier la catégorie', body, isNew ? 'Ajouter' : 'Enregistrer', function (data) {
       var name = (data.name || '').trim();
@@ -995,6 +1267,69 @@
       if (isNew) state.categories.push(item);
       else state.categories = state.categories.map(function (x) { return x.id === id ? item : x; });
     }, del);
+  }
+
+  // ---------- Simulation « Et si… » ----------
+  // Rien n'est enregistré tant qu'on ne touche pas « Appliquer ».
+
+  function whatIf() {
+    var active = state.subs.filter(function (s) { return !s.paused; });
+    var body = '<p class="pill-info" id="wi-out" aria-live="polite"></p><div id="wi-goals"></div>' +
+      '<div class="field-row">' + amountField('salary', 'Salaire (€)', state.salary) + amountField('savings', 'Épargne par mois (€)', state.savings) + '</div>' +
+      (active.length ? '<div class="field"><span>Abonnements gardés</span><div class="group">' + active.map(function (s) {
+        return '<label class="row pick">' + subTile(s) + '<span class="row-main"><span class="row-title">' + esc(s.name) + '</span></span>' +
+          '<span class="row-amount">' + priceLabel(s) + '</span><input type="checkbox" name="keep-' + esc(s.id) + '" checked aria-label="Garder ' + esc(s.name) + '"></label>';
+      }).join('') + '</div></div>' : '') +
+      '<p class="caption">Change un montant ou décoche un abonnement pour voir l\'effet. Rien n\'est enregistré tant que tu n\'appliques pas.</p>';
+    var apply = '<button type="button" class="btn btn-block" data-action="whatif-apply">Appliquer ces changements</button>';
+    openSheet('Et si…', body, 'Fermer', null, apply);
+    sheetForm.dataset.kind = 'whatif';
+    previewWhatIf();
+  }
+
+  function readWhatIf() {
+    var data = {};
+    new FormData(sheetForm).forEach(function (v, k) { data[k] = v; });
+    var salary = parseAmount(data.salary || '0');
+    var savings = parseAmount(data.savings || '0');
+    var kept = state.subs.filter(function (s) { return !s.paused && data['keep-' + s.id]; });
+    var dropped = state.subs.filter(function (s) { return !s.paused && !data['keep-' + s.id]; });
+    return { salary: salary === null ? state.salary : salary, savings: savings === null ? state.savings : savings, kept: kept, dropped: dropped };
+  }
+
+  function previewWhatIf() {
+    var out = document.getElementById('wi-out');
+    if (!out) return;
+    var w = readWhatIf();
+    var now = totals();
+    var sim = totals({ salary: w.salary, savings: w.savings, subs: w.kept });
+    var diff = sim.free - now.free;
+    var perYear = w.dropped.reduce(function (a, s) { return a + (s.frequency === 'year' ? s.amount : s.amount * 12); }, 0);
+    out.innerHTML = '<span class="muted">Il te resterait</span><span class="strong"' + (sim.free < 0 ? ' style="color:var(--danger)"' : '') + '>' + euro(sim.free) + '</span>' +
+      (Math.abs(diff) >= 0.01 ? '<span class="' + (diff > 0 ? 'ok' : 'soon') + '">' + (diff > 0 ? '+ ' : '− ') + euro(Math.abs(diff)) + ' par mois</span>' : '<span class="muted">comme aujourd\'hui</span>');
+    // Si l'argent gagné va aux objectifs : combien de mois en moins.
+    var lines = [];
+    if (perYear > 0) lines.push(euro(perYear) + ' économisés sur un an en arrêtant ' + w.dropped.map(function (s) { return esc(s.name); }).join(', ') + '.');
+    if (diff > 0) {
+      state.goals.forEach(function (g) {
+        var p = goalPlan(g);
+        if (p.done || p.monthly <= 0 || lines.length > 3) return;
+        var faster = Math.max(1, Math.ceil(p.missing / (p.monthly + diff)));
+        if (faster < p.left) lines.push('En le mettant sur « ' + esc(g.name) + ' » : atteint en ' + durationLabel(faster) + ' au lieu de ' + durationLabel(p.left) + '.');
+      });
+    }
+    document.getElementById('wi-goals').innerHTML = lines.length ? '<p class="caption">' + lines.join('<br>') + '</p>' : '';
+  }
+
+  function applyWhatIf() {
+    var w = readWhatIf();
+    var msg = 'Appliquer ces changements ?' + (w.dropped.length ? '\nLes abonnements décochés seront mis en pause (pas supprimés).' : '');
+    if (!window.confirm(msg)) return;
+    state.salary = w.salary;
+    state.savings = w.savings;
+    w.dropped.forEach(function (s) { s.paused = true; });
+    closeSheet(); save(); render();
+    toast('Changements appliqués');
   }
 
   // ---------- Notifications ----------
@@ -1024,6 +1359,22 @@
       changed = true;
       notify(u.sub.name + ' · ' + euro(u.sub.amount),
         when === 'day' ? "Prélèvement prévu aujourd'hui." : 'Prélèvement ' + (u.diff === 1 ? 'demain' : 'dans ' + u.diff + ' jours') + ', le ' + shortDate.format(u.date) + '.',
+        key);
+    });
+    // Fin d'un essai gratuit : le moment de résilier si on ne veut pas le garder.
+    state.subs.forEach(function (s) {
+      if (s.paused || !s.trialEnd) return;
+      var diff = diffDays(parseIso(s.trialEnd), t);
+      var when = diff === r.daysBefore ? 'trial-before' : (r.sameDay && diff === 0 ? 'trial-day' : null);
+      if (!when) return;
+      var key = s.id + ':' + s.trialEnd + ':' + when;
+      keep[key] = true;
+      if (state.notified[key]) return;
+      state.notified[key] = iso(t);
+      changed = true;
+      notify('Fin de l\'essai ' + s.name,
+        (diff === 0 ? 'Ton essai gratuit se termine aujourd\'hui' : 'Ton essai gratuit se termine ' + (diff === 1 ? 'demain' : 'dans ' + diff + ' jours')) +
+        '. Ensuite : ' + euro(s.amount) + (s.frequency === 'year' ? ' par an' : ' par mois') + '. Pense à résilier si tu ne le gardes pas.',
         key);
     });
     Object.keys(state.notified).forEach(function (k) {
@@ -1058,14 +1409,21 @@
   function exportData() {
     var data = JSON.parse(JSON.stringify(state));
     delete data.notified;
+    data.meta.lastExport = iso(today());
     var name = 'finy-sauvegarde-' + iso(today()) + '.json';
     var blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     var file;
     try { file = new File([blob], name, { type: 'application/json' }); } catch (e) { file = null; }
+    var done = function () {
+      state.meta.lastExport = iso(today());
+      save(); render();
+      toast('Sauvegarde exportée');
+    };
     if (file && navigator.canShare && navigator.canShare({ files: [file] })) {
-      navigator.share({ files: [file], title: 'Sauvegarde Finy' }).catch(function () {});
+      navigator.share({ files: [file], title: 'Sauvegarde Finy' }).then(done, function () {});
       return;
     }
+    done();
     var url = URL.createObjectURL(blob);
     var a = document.createElement('a');
     a.href = url;
@@ -1317,12 +1675,13 @@
     return out.sort(function (a, b) { return b.amount - a.amount; });
   }
 
-  function alreadyHave(c) {
+  // L'abonnement déjà enregistré qui correspond à un paiement trouvé, s'il y en a un.
+  function existingSub(c) {
     var n = fold(c.name);
-    return state.subs.some(function (s) {
+    return state.subs.filter(function (s) {
       var m = fold(s.name);
       return m.length >= 3 && n.length >= 3 && (m.indexOf(n) >= 0 || n.indexOf(m) >= 0);
-    });
+    })[0] || null;
   }
 
   function importStatement(text) {
@@ -1373,22 +1732,41 @@
         '<p class="caption">Il faut au moins deux prélèvements par abonnement. Essaie avec un relevé qui couvre plusieurs mois.</p>', 'Fermer', null);
       return;
     }
-    var body = '<p class="caption">Ces paiements reviennent au même montant. Décoche ceux qui ne sont pas des abonnements.</p><div class="group">' +
+    // Un abonnement déjà enregistré dont le dernier prélèvement n'a plus le même prix : on propose de le mettre à jour.
+    found.forEach(function (c) {
+      c.have = existingSub(c);
+      c.change = c.have && c.have.frequency === c.frequency && Math.abs(c.have.amount - c.amount) >= 0.01;
+    });
+    found.sort(function (a, b) { return (b.change ? 1 : 0) - (a.change ? 1 : 0); });
+    var changes = found.filter(function (c) { return c.change; }).length;
+    var body = '<p class="caption">Ces paiements reviennent au même montant. Décoche ceux qui ne sont pas des abonnements.' +
+      (changes ? ' Les changements de prix sont en haut : coche-les pour mettre Finy à jour.' : '') + '</p><div class="group">' +
       found.map(function (c, i) {
-        var have = alreadyHave(c);
-        var meta = (have ? 'Déjà dans Finy · ' : '') + (c.frequency === 'year' ? 'Annuel' : 'Mensuel') + ' · le ' + c.day + ' · vu ' + c.count + ' fois';
+        if (c.change) {
+          var up = c.amount > c.have.amount;
+          return '<label class="row tall pick">' + subTile(c.have) +
+            '<span class="row-main"><span class="row-title">' + esc(c.have.name) + '</span><span class="row-meta"><span class="' + (up ? 'soon' : 'ok') + '">' +
+            (up ? 'Hausse' : 'Baisse') + ', avant ' + euro(c.have.amount) + '</span></span></span>' +
+            '<span class="row-amount">' + priceLabel(c) + '</span><input type="checkbox" name="upd-' + i + '" checked aria-label="Mettre à jour le prix de ' + esc(c.have.name) + '"></label>';
+        }
+        var meta = (c.have ? 'Déjà dans Finy · ' : '') + (c.frequency === 'year' ? 'Annuel' : 'Mensuel') + ' · le ' + c.day + ' · vu ' + c.count + ' fois';
         return '<label class="row tall pick">' + subTile(c) +
           '<span class="row-main"><span class="row-title">' + esc(c.name) + '</span><span class="row-meta"><span>' + meta + '</span></span></span>' +
-          '<span class="row-amount">' + priceLabel(c) + '</span><input type="checkbox" name="pick-' + i + '"' + (have ? '' : ' checked') + ' aria-label="Ajouter ' + esc(c.name) + '"></label>';
+          '<span class="row-amount">' + priceLabel(c) + '</span><input type="checkbox" name="pick-' + i + '"' + (c.have ? '' : ' checked') + ' aria-label="Ajouter ' + esc(c.name) + '"></label>';
       }).join('') + '</div>';
     var n = found.length;
-    openSheet(n + ' abonnement' + (n > 1 ? 's trouvés' : ' trouvé'), body, 'Ajouter la sélection', function (data) {
+    openSheet(n + ' abonnement' + (n > 1 ? 's trouvés' : ' trouvé'), body, 'Valider la sélection', function (data) {
       var picked = found.filter(function (c, i) { return data['pick-' + i]; });
-      if (!picked.length) return 'Coche au moins un abonnement.';
+      var updated = found.filter(function (c, i) { return data['upd-' + i]; });
+      if (!picked.length && !updated.length) return 'Coche au moins un abonnement.';
       picked.forEach(function (c) {
-        state.subs.push({ id: uid(), name: c.name, amount: c.amount, day: c.day, frequency: c.frequency, month: c.month, category: c.category, site: c.site, image: null });
+        state.subs.push({ id: uid(), name: c.name, amount: c.amount, day: c.day, frequency: c.frequency, month: c.month, category: c.category, site: c.site, image: null, trialEnd: '', paused: false });
       });
-      toast(picked.length + ' abonnement' + (picked.length > 1 ? 's ajoutés' : ' ajouté'));
+      updated.forEach(function (c) { c.have.amount = c.amount; });
+      var msg = [];
+      if (picked.length) msg.push(picked.length + ' abonnement' + (picked.length > 1 ? 's ajoutés' : ' ajouté'));
+      if (updated.length) msg.push(updated.length + ' prix mis à jour');
+      toast(msg.join(', '));
     });
   }
 
@@ -1543,10 +1921,30 @@
         closeSheet(); save(); render(); toast('Abonnement supprimé');
         return;
       case 'delete-cat':
-        if (!window.confirm('Supprimer cette catégorie ?')) return;
+        if (!window.confirm('Supprimer cette catégorie et ses dépenses ?')) return;
         state.categories = state.categories.filter(function (c) { return c.id !== id; });
+        state.expenses = state.expenses.filter(function (x) { return x.cat !== id; });
         closeSheet(); save(); render();
         return;
+      case 'add-exp': return editExpense();
+      case 'add-exp-in': return editExpense(id);
+      case 'delete-exp':
+        state.expenses = state.expenses.filter(function (x) { return x.id !== id; });
+        save(); render(); toast('Dépense supprimée');
+        return editCat(el.dataset.cat);
+      case 'add-income': return editIncome(null);
+      case 'edit-income': return editIncome(id);
+      case 'delete-income':
+        if (!window.confirm('Supprimer ce revenu ?')) return;
+        state.incomes = state.incomes.filter(function (i) { return i.id !== id; });
+        closeSheet(); save(); render(); toast('Revenu supprimé');
+        return;
+      case 'goal-deposit': return depositGoal(id);
+      case 'whatif': return whatIf();
+      case 'whatif-apply': return applyWhatIf();
+      case 'backup-later':
+        state.meta.backupSnooze = iso(today());
+        save(); return render();
       case 'go-reminders':
         ui.focusAfter = 'rappels';
         if (currentRoute() === 'reglages') render(); else location.hash = '#/reglages';
@@ -1598,6 +1996,7 @@
   document.addEventListener('input', function (e) {
     var el = e.target;
     if (sheetForm.dataset.kind === 'goal' && sheetForm.contains(el)) return previewGoal();
+    if (sheetForm.dataset.kind === 'whatif' && sheetForm.contains(el)) return previewWhatIf();
     switch (el.dataset.input) {
       case 'abos-q':
         ui.abosQuery = el.value;
@@ -1624,6 +2023,7 @@
 
   document.addEventListener('change', function (e) {
     var el = e.target;
+    if (sheetForm.dataset.kind === 'whatif' && sheetForm.contains(el)) previewWhatIf();
     if (el.dataset.input === 'sv-input') fillSavings();
     if (el.dataset.input === 'sub-freq') {
       var year = el.value === 'year';
@@ -1651,6 +2051,8 @@
   // ---------- Démarrage ----------
 
   applyTheme();
+  // Enregistre la photo du mois dans l'historique dès l'ouverture.
+  if (state.salary > 0) save();
   render();
   checkReminders();
 
