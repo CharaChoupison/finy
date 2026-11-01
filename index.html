@@ -61,6 +61,13 @@
     <form method="dialog" id="sheet-form" class="sheet-body" novalidate></form>
   </dialog>
 
+  <div id="quick" class="quick" role="dialog" aria-modal="true" aria-labelledby="quick-title" hidden></div>
+
+  <button type="button" class="fab" data-action="add-exp" aria-label="Ajouter une dépense">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+    <span class="fab-label">Dépense</span>
+  </button>
+
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
   <script src="app.js"></script>

@@ -30,6 +30,7 @@
     calendar: 'M5 5h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2zM3 10h18M8 3v4M16 3v4',
     piggy: 'M12 3a9 9 0 1 0 0 18a9 9 0 0 0 0-18zM12 7v10M15 9.5c-.5-1-1.6-1.5-3-1.5c-1.7 0-3 .8-3 2s1.3 1.7 3 2s3 .8 3 2s-1.3 2-3 2c-1.4 0-2.5-.5-3-1.5',
     down: 'M6 9l6 6 6-6',
+    backspace: 'M21 5H9l-6 7 6 7h12a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1zM12 9l6 6M18 9l-6 6',
     sliders: 'M4 6h9M17 6h3M15 4v4M4 12h3M11 12h9M9 10v4M4 18h11M19 18h1M17 16v4'
   };
 
@@ -1022,26 +1023,28 @@
       return;
     }
     var need = goalsMonthly();
-    var html = '<div class="group">' + state.goals.map(function (g) {
+    // Montant sans « ,00 » quand il est rond : 770 €, 3 000 €, mais 158,34 €.
+    var short = function (n) { return euro(n).replace(/,00(?=\s*€)/, ''); };
+    var endFmt = new Intl.DateTimeFormat('fr-FR', { month: 'short', year: 'numeric' });
+    var html = '<div class="goal-list">' + state.goals.map(function (g) {
       var p = goalPlan(g);
-      var meta = !p.done ? 'Encore ' + durationLabel(p.left) + ' · ' + monthName.format(p.end) : 'Objectif atteint';
-      // Où en est le versement du mois : à jour, ou ce qu'il manque encore.
+      // Où en est le versement du mois : à jour, ou ce qu'il reste à verser.
       var status = p.done || p.monthly <= 0 ? ''
         : p.toGo <= 0 ? '<span class="ok">✓ À jour ce mois-ci</span>'
-        : p.paid > 0 ? '<span>Versé ce mois-ci : ' + euro(p.paid) + ' sur ' + euro(p.monthly) + '</span>'
-        : '<span>Rien versé ce mois-ci</span>';
-      return '<button type="button" class="row tall goal" data-action="edit-goal" data-id="' + esc(g.id) + '">' +
-        '<span class="row-main"><span class="row-title">' + esc(g.name) + '</span><span class="row-meta"><span>' + meta + '</span></span>' +
-        '<span class="goal-bar" aria-hidden="true"><span style="width:' + (p.progress * 100).toFixed(1) + '%"></span></span>' +
-        '<span class="row-meta"><span>' + euro(g.saved) + ' sur ' + euro(g.target) + '</span></span>' +
-        (status ? '<span class="row-meta">' + status + '</span>' : '') + '</span>' +
-        '<span class="row-amount">' + (!p.done ? euro(p.monthly) + '<small class="per">/mois</small>' : '✓') + '</span></button>' +
-        (!p.done ? '<button type="button" class="row row-link row-sub-link" data-action="goal-deposit" data-id="' + esc(g.id) + '">' + icon('plus') +
-          'Ajouter un versement' + (p.toGo > 0 ? '<span class="muted" style="font-weight:400"> · encore ' + euro(p.toGo) + ' ce mois-ci</span>' : '') + '</button>' : '');
+        : '<span class="muted">Encore <span class="strong" style="color:var(--ink)">' + short(p.toGo) + '</span> <span style="white-space:nowrap">ce mois-ci</span></span>';
+      return '<div class="goal-card' + (p.done ? ' done' : '') + '">' +
+        '<button type="button" class="goal-main" data-action="edit-goal" data-id="' + esc(g.id) + '">' +
+        '<span class="goal-top"><span class="goal-name">' + esc(g.name) + '</span>' +
+        '<span class="goal-monthly">' + (p.done ? '<span class="ok">✓ Atteint</span>' : short(p.monthly) + '<small>/mois</small>') + '</span></span>' +
+        '<span class="goal-bar" role="img" aria-label="' + Math.round(p.progress * 100) + ' % de l\'objectif"><span style="width:' + (p.progress * 100).toFixed(1) + '%"></span></span>' +
+        '<span class="goal-foot"><span><span class="strong">' + short(g.saved) + '</span> sur ' + short(g.target) + '</span>' +
+        '<span>' + (p.done ? '' : endFmt.format(p.end)) + '</span></span></button>' +
+        (status ? '<div class="goal-status">' + status +
+          '<button type="button" class="btn btn-sm" data-action="goal-deposit" data-id="' + esc(g.id) + '">' + icon('plus') + 'Verser</button></div>' : '') +
+        '</div>';
     }).join('') + '</div>';
     if (need > 0) {
-      html += '<p class="caption">' + (state.goals.length > 1 ? 'Tes objectifs demandent ' : 'Cet objectif demande ') + '<span class="strong" style="color:var(--ink)">' + euro(need) + ' par mois</span>' +
-        ', en plus de ton épargne. Ce montant est retiré de ce qu\'il te reste.</p>';
+      html += '<p class="caption">Au total, <span class="strong" style="color:var(--ink)">' + euro(need) + ' par mois</span>, déjà retirés de ce qu\'il te reste.</p>';
     }
     el.innerHTML = html;
   }
@@ -1090,30 +1093,145 @@
   }
 
   // Dépense rapide dans une catégorie (courses, essence…).
+  // Saisie rapide d'une dépense : écran plein sur téléphone, fenêtre centrée sur ordinateur.
+  // Le montant se tape au pavé numérique intégré (ou au clavier) : pas de champ à toucher, pas de clavier système.
+  var qe = null;
+
   function editExpense(catId) {
     if (!state.categories.length) {
-      toast('Crée d\'abord une catégorie, par exemple Alimentation');
+      toast('Crée d\'abord une enveloppe, par exemple Alimentation');
       return editCat(null);
     }
     var last = catId || (state.expenses.length ? state.expenses[state.expenses.length - 1].cat : null);
-    var body = amountField('amount', 'Montant (€)', 0) +
-      '<label class="field"><span>Catégorie</span><select class="input" name="cat">' + state.categories.map(function (c) {
-        var left = c.amount - spentIn(c.id);
-        return '<option value="' + esc(c.id) + '"' + (c.id === last ? ' selected' : '') + '>' + esc(c.name) + ' · reste ' + euro(left) + '</option>';
-      }).join('') + '</select></label>' +
-      '<div class="field-row"><label class="field"><span>Note (facultatif)</span><input class="input" name="note" type="text" maxlength="60" autocomplete="off" placeholder="Courses, plein…"></label>' +
-      '<label class="field"><span>Date</span><input class="input" name="date" type="date" value="' + iso(today()) + '" max="' + iso(today()) + '"></label></div>';
-    openSheet('Nouvelle dépense', body, 'Ajouter', function (data) {
-      var n = parseAmount(data.amount);
-      if (n === null || n <= 0) return 'Indique un montant, par exemple 32,50.';
-      var date = isIsoDate(data.date) ? data.date : iso(today());
-      if (date > iso(today())) return 'Choisis une date passée ou aujourd\'hui.';
-      state.expenses.push({ id: uid(), cat: data.cat, amount: n, date: date, note: (data.note || '').trim().slice(0, 60) });
-      var c = state.categories.filter(function (x) { return x.id === data.cat; })[0];
-      var left = c ? c.amount - spentIn(c.id) : 0;
-      toast(c && date.slice(0, 7) === monthKey(today()) ? (left >= 0 ? 'Reste ' + euro(left) + ' en ' + c.name : c.name + ' : budget dépassé') : 'Dépense ajoutée');
-    });
+    if (!state.categories.some(function (c) { return c.id === last; })) last = state.categories[0].id;
+    qe = { s: '', cat: last, date: iso(today()), note: '', opener: document.activeElement };
+
+    var keys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', ','].map(function (k) {
+      return '<button type="button" class="qe-key" data-action="qe-key" data-value="' + k + '">' + k + '</button>';
+    }).join('') + '<button type="button" class="qe-key" data-action="qe-key" data-value="0">0</button>' +
+      '<button type="button" class="qe-key" data-action="qe-back" aria-label="Effacer">' + icon('backspace') + '</button>';
+
+    var el = document.getElementById('quick');
+    el.innerHTML = '<div class="qe-panel">' +
+      '<header class="qe-head">' +
+      '<button type="button" class="icon-btn" data-action="qe-close" aria-label="Fermer">' + icon('close') + '</button>' +
+      '<h2 class="qe-title" id="quick-title">Nouvelle dépense</h2>' +
+      '<label class="qe-date"><span id="qe-date-label">Aujourd\'hui</span>' + icon('down') +
+      '<input type="date" data-input="qe-date" value="' + qe.date + '" max="' + qe.date + '" aria-label="Date de la dépense"></label></header>' +
+      '<div class="qe-amount-wrap"><p class="qe-amount" id="qe-amount" aria-live="polite"></p><p class="qe-hint" id="qe-hint"></p></div>' +
+      '<div class="qe-cats chips" role="radiogroup" aria-label="Enveloppe">' + state.categories.map(function (c, i) {
+        return '<button type="button" class="chip qe-cat" role="radio" data-action="qe-cat" data-id="' + esc(c.id) + '">' +
+          '<span class="dot sm" style="--c:' + CAT_PALETTE[i % CAT_PALETTE.length] + '" aria-hidden="true"></span>' + esc(c.name) + '</button>';
+      }).join('') + '</div>' +
+      '<label class="qe-note"><span class="sr-only">Note</span><input type="text" maxlength="60" autocomplete="off" placeholder="Ajouter une note (courses, plein…)" data-input="qe-note"></label>' +
+      '<button type="button" class="btn btn-primary btn-block qe-submit" data-action="qe-submit" disabled>Ajouter</button>' +
+      '<div class="qe-pad">' + keys + '</div></div>';
+
+    el.hidden = false;
+    document.body.classList.add('qe-open');
+    qeUpdate();
+    var first = el.querySelector('.qe-cat[aria-checked="true"]') || el.querySelector('.qe-cat');
+    if (first) first.scrollIntoView({ block: 'nearest', inline: 'center' });
+    el.querySelector('[data-action="qe-close"]').focus({ preventScroll: true });
   }
+
+  function qeValue() {
+    var n = parseFloat(qe.s.replace(',', '.'));
+    return isFinite(n) ? Math.round(n * 100) / 100 : 0;
+  }
+
+  // Met à jour le montant, la phrase sous le montant, l'enveloppe choisie et le bouton, sans tout redessiner.
+  function qeUpdate() {
+    if (!qe) return;
+    var el = document.getElementById('quick');
+    var parts = (qe.s || '0').split(',');
+    var int = parts[0].replace(/^0+(?=\d)/, '').replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+    var shown = int + (parts.length > 1 ? ',' + parts[1] : '');
+    var amount = document.getElementById('qe-amount');
+    amount.innerHTML = '<span class="qe-num' + (qe.s ? '' : ' empty') + '">' + shown + '</span><span class="qe-caret" aria-hidden="true"></span><span class="qe-cur">€</span>';
+    amount.classList.toggle('long', shown.length > 7);
+
+    var v = qeValue();
+    var c = state.categories.filter(function (x) { return x.id === qe.cat; })[0];
+    var hint = document.getElementById('qe-hint');
+    if (c && qe.date.slice(0, 7) === monthKey(today())) {
+      var after = c.amount - spentIn(c.id) - v;
+      hint.className = 'qe-hint' + (after < 0 ? ' over' : '');
+      hint.textContent = v <= 0 ? 'Reste ' + euro(c.amount - spentIn(c.id)) + ' en ' + c.name
+        : after >= 0 ? 'Il restera ' + euro(after) + ' en ' + c.name : c.name + ' dépassé de ' + euro(-after);
+    } else {
+      hint.className = 'qe-hint';
+      hint.textContent = c ? 'Dans ' + c.name : '';
+    }
+
+    el.querySelectorAll('.qe-cat').forEach(function (b) { b.setAttribute('aria-checked', String(b.dataset.id === qe.cat)); });
+    el.querySelector('.qe-submit').disabled = !(v > 0);
+    var t = today();
+    var d = parseIso(qe.date);
+    var diff = diffDays(t, d);
+    document.getElementById('qe-date-label').textContent = diff === 0 ? 'Aujourd\'hui' : diff === 1 ? 'Hier' : shortDate.format(d);
+  }
+
+  function qeKey(k) {
+    if (!qe) return;
+    var s = qe.s;
+    if (k === ',') {
+      if (s.indexOf(',') >= 0) return;
+      s = (s || '0') + ',';
+    } else {
+      var p = s.split(',');
+      if (p.length > 1 && p[1].length >= 2) return;
+      if (p.length === 1 && p[0].replace(/^0+/, '').length >= 6) return;
+      s = s === '0' ? k : s + k;
+    }
+    qe.s = s;
+    if (navigator.vibrate) navigator.vibrate(8);
+    qeUpdate();
+  }
+
+  function qeBack() {
+    if (!qe) return;
+    qe.s = qe.s.slice(0, -1);
+    qeUpdate();
+  }
+
+  function qeClose() {
+    var el = document.getElementById('quick');
+    el.hidden = true;
+    el.innerHTML = '';
+    document.body.classList.remove('qe-open');
+    var back = qe && qe.opener;
+    qe = null;
+    if (back && back.focus) back.focus({ preventScroll: true });
+  }
+
+  function qeSubmit() {
+    if (!qe) return;
+    var v = qeValue();
+    if (!(v > 0)) return;
+    var date = isIsoDate(qe.date) && qe.date <= iso(today()) ? qe.date : iso(today());
+    state.expenses.push({ id: uid(), cat: qe.cat, amount: v, date: date, note: qe.note.trim().slice(0, 60) });
+    var c = state.categories.filter(function (x) { return x.id === qe.cat; })[0];
+    var left = c ? c.amount - spentIn(c.id) : 0;
+    qeClose();
+    save();
+    render();
+    toast(c && date.slice(0, 7) === monthKey(today()) ? (left >= 0 ? euro(v) + ' ajouté · reste ' + euro(left) + ' en ' + c.name : c.name + ' : budget dépassé') : 'Dépense ajoutée');
+  }
+
+  // Clavier physique (ordinateur) quand la saisie rapide est ouverte.
+  document.addEventListener('keydown', function (e) {
+    if (!qe) return;
+    var inNote = e.target && e.target.dataset && e.target.dataset.input === 'qe-note';
+    if (e.key === 'Escape') { e.preventDefault(); return qeClose(); }
+    if (e.key === 'Enter') { e.preventDefault(); return qeSubmit(); }
+    if (inNote || e.metaKey || e.ctrlKey || e.altKey) return;
+    if (/^[0-9]$/.test(e.key)) { e.preventDefault(); return qeKey(e.key); }
+    if (e.key === ',' || e.key === '.') { e.preventDefault(); return qeKey(','); }
+    if (e.key === 'Backspace') { e.preventDefault(); return qeBack(); }
+  });
+  // Ordinateur : un clic sur le fond assombri ferme la saisie.
+  document.getElementById('quick').addEventListener('click', function (e) { if (e.target.id === 'quick') qeClose(); });
 
   // Revenu ponctuel, compté seulement pour le mois en cours.
   function editIncome(id) {
@@ -1324,6 +1442,9 @@
       else a.removeAttribute('aria-current');
     });
     placeTabPill();
+    var fab = document.querySelector('.fab');
+    if (fab) { fab.hidden = key === 'reglages'; fab.classList.remove('compact'); }
+    lastScrollY = window.scrollY;
     document.title = { '': 'Finy', calendrier: 'Calendrier · Finy', abonnements: 'Abonnements · Finy', epargne: 'Épargne · Finy', bilan: 'Bilan · Finy', reglages: 'Réglages · Finy' }[key];
     if (ui.focusAfter) {
       var target = document.getElementById(ui.focusAfter);
@@ -2216,6 +2337,11 @@
         closeSheet(); save(); render();
         return;
       case 'add-exp': return editExpense();
+      case 'qe-key': return qeKey(v);
+      case 'qe-back': return qeBack();
+      case 'qe-cat': if (qe) { qe.cat = id; qeUpdate(); } return;
+      case 'qe-close': return qeClose();
+      case 'qe-submit': return qeSubmit();
       case 'add-exp-in': return editExpense(id);
       case 'delete-exp':
         state.expenses = state.expenses.filter(function (x) { return x.id !== id; });
@@ -2284,6 +2410,7 @@
 
   document.addEventListener('input', function (e) {
     var el = e.target;
+    if (el.dataset.input === 'qe-note' && qe) { qe.note = el.value; return; }
     if (sheetForm.dataset.kind === 'goal' && sheetForm.contains(el)) return previewGoal();
     if (sheetForm.dataset.kind === 'whatif' && sheetForm.contains(el)) return previewWhatIf();
     switch (el.dataset.input) {
@@ -2312,6 +2439,7 @@
 
   document.addEventListener('change', function (e) {
     var el = e.target;
+    if (el.dataset.input === 'qe-date' && qe) { qe.date = isIsoDate(el.value) && el.value <= iso(today()) ? el.value : iso(today()); return qeUpdate(); }
     if (sheetForm.dataset.kind === 'whatif' && sheetForm.contains(el)) previewWhatIf();
     if (el.dataset.input === 'sv-input') fillSavings();
     if (el.dataset.input === 'sub-kind') {
@@ -2336,6 +2464,17 @@
 
   window.addEventListener('hashchange', render);
   window.addEventListener('resize', placeTabPill);
+
+  // Bouton « Dépense » du téléphone : il se réduit en rond quand on descend, et reprend son texte quand on remonte.
+  var lastScrollY = 0;
+  window.addEventListener('scroll', function () {
+    var fab = document.querySelector('.fab');
+    if (!fab) return;
+    var y = window.scrollY;
+    if (Math.abs(y - lastScrollY) < 8) return;
+    fab.classList.toggle('compact', y > lastScrollY && y > 80);
+    lastScrollY = y;
+  }, { passive: true });
   document.addEventListener('visibilitychange', function () {
     if (document.visibilityState === 'visible') { render(); checkReminders(); }
   });
