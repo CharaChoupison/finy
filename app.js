@@ -984,7 +984,10 @@
     runCounters(heroEl);
     var pct = state.salary > 0 ? Math.round(state.savings / state.salary * 100) + ' % de ton salaire · ' : '';
     document.getElementById('sv-sub').textContent = pct + euro(state.savings * 12) + ' sur un an';
-    if (!skipInput) document.getElementById('sv-input').value = plain(state.savings);
+    var svInput = document.getElementById('sv-input');
+    if (!skipInput) svInput.value = plain(state.savings);
+    // Le champ prend la largeur de son texte : le montant et le « € » restent centrés ensemble.
+    svInput.style.width = (Math.max(2, svInput.value.length) + 0.4) + 'ch';
     var presets = document.getElementById('sv-presets');
     if (presets) {
       presets.innerHTML = [10, 20, 30, 40].map(function (p) {
@@ -1320,6 +1323,7 @@
       if (a.dataset.tab === r.tab) a.setAttribute('aria-current', 'page');
       else a.removeAttribute('aria-current');
     });
+    placeTabPill();
     document.title = { '': 'Finy', calendrier: 'Calendrier · Finy', abonnements: 'Abonnements · Finy', epargne: 'Épargne · Finy', bilan: 'Bilan · Finy', reglages: 'Réglages · Finy' }[key];
     if (ui.focusAfter) {
       var target = document.getElementById(ui.focusAfter);
@@ -1329,6 +1333,25 @@
     window.scrollTo(0, scroll);
     if (key !== lastRoute) view.focus({ preventScroll: true });
     lastRoute = key;
+  }
+
+  // Barre d'onglets du téléphone : la pastille glisse jusqu'à l'onglet actif.
+  // Pas d'animation au tout premier placement, ni quand l'onglet actif n'est pas dans la barre (Réglages).
+  function placeTabPill() {
+    var pill = document.querySelector('.tab-pill');
+    if (!pill) return;
+    var a = document.querySelector('.tabbar a[aria-current="page"]');
+    if (!a || !a.offsetWidth || getComputedStyle(pill).display === 'none') {
+      pill.style.opacity = '0';
+      return;
+    }
+    pill.style.width = a.offsetWidth + 'px';
+    pill.style.transform = 'translateX(' + a.offsetLeft + 'px)';
+    pill.style.opacity = '1';
+    if (!pill.classList.contains('ready')) {
+      void pill.offsetWidth;
+      setTimeout(function () { pill.classList.add('ready'); }, 60);
+    }
   }
 
   function applyTheme() {
@@ -2312,6 +2335,7 @@
   });
 
   window.addEventListener('hashchange', render);
+  window.addEventListener('resize', placeTabPill);
   document.addEventListener('visibilitychange', function () {
     if (document.visibilityState === 'visible') { render(); checkReminders(); }
   });

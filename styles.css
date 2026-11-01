@@ -358,7 +358,7 @@ select.input { background-image: linear-gradient(45deg, transparent 50%, var(--m
 
 .stepper-box { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-2); border-radius: var(--radius-lg); background: var(--surface); }
 .stepper-box label { flex: 1 1 auto; min-width: 0; display: flex; align-items: baseline; justify-content: center; gap: 4px; font-size: 24px; line-height: 30px; font-weight: 600; }
-.stepper-box input { width: 140px; border: 0; outline: none; background: none; color: var(--ink); text-align: right; font-size: 24px; font-weight: 600; }
+.stepper-box input { width: 6.4ch; max-width: 100%; padding: 0; border: 0; outline: none; background: none; color: var(--ink); text-align: right; font-size: 24px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .stepper-box .icon-btn { width: 48px; height: 48px; background: var(--surface-raised); }
 
 .stepper { display: flex; align-items: center; gap: 4px; }
@@ -430,6 +430,8 @@ select.input { background-image: linear-gradient(45deg, transparent 50%, var(--m
 .tabbar a { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; color: var(--muted); font-size: 11px; line-height: 14px; font-weight: 600; }
 .tabbar a[aria-current="page"] { color: var(--accent); }
 .tabbar .tab-logo, .tabbar .tab-desktop { display: none; }
+.tab-pill { display: none; }
+@media (max-width: 959px) { .tab-pill { display: block; } }
 
 /* ---------- Feuille (bas de l'écran) ---------- */
 
@@ -596,13 +598,19 @@ button.row:active, a.row:active { transform: scale(.985); }
   .view[data-route="accueil"] .a-top { display: none; }
   .view[data-route="accueil"] .a-actions { align-self: end; margin: 0; }
 
-  /* Abonnements : filtres en haut, catégories à gauche, liste à droite */
+  /* Abonnements : total à gauche et répartition par catégorie à droite, puis filtres et liste sur toute la largeur */
   .view[data-route="abonnements"] {
-    grid-template-columns: minmax(260px, 1fr) minmax(0, 1.6fr);
-    grid-template-areas: "top top" "hero hero" "actions actions" "side main";
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-areas: "top top" "hero side" "actions actions" "main main";
   }
-  .view[data-route="abonnements"] .a-side { position: sticky; top: 40px; }
-  .view[data-route="abonnements"] .legend { grid-template-columns: minmax(0, 1fr); }
+  .view[data-route="abonnements"] .a-side {
+    align-self: stretch;
+    justify-content: center;
+    padding: 24px 28px;
+    border-radius: 28px;
+    background: var(--surface);
+  }
+  .view[data-route="abonnements"] .legend { grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); column-gap: 28px; }
   .view[data-route="abonnements"] .search { max-width: 420px; }
   .view[data-route="abonnements"] .chips { margin: 0; padding: 0; flex-wrap: wrap; overflow: visible; }
 
@@ -617,6 +625,8 @@ button.row:active, a.row:active { transform: scale(.985); }
   /* Épargne : réglage à gauche, calcul à droite */
   .view[data-route="epargne"] {
     grid-template-areas: "top top" "hero side" "main side" "goals goals";
+    /* La carte de droite est haute : la place en trop va sous le réglage, pas entre le montant et le réglage */
+    grid-template-rows: auto auto 1fr auto;
   }
   .a-goals { grid-area: goals; }
 
@@ -742,7 +752,22 @@ button.row:active, a.row:active { transform: scale(.985); }
   }
   .tabbar a { gap: 2px; border-radius: var(--radius-full); font-size: 10px; line-height: 13px; }
   .tabbar a svg { width: 22px; height: 22px; }
-  .tabbar a[aria-current="page"] { background: var(--primary); color: var(--on-primary); }
+  .tabbar a { position: relative; z-index: 1; transition: transform .12s ease, color .25s ease; }
+  .tabbar a[aria-current="page"] { color: var(--on-primary); }
+  /* La pastille de l'onglet actif, déplacée par placeTabPill() dans app.js */
+  .tab-pill {
+    position: absolute;
+    top: 6px;
+    bottom: 6px;
+    left: 0;
+    z-index: 0;
+    width: 0;
+    border-radius: var(--radius-full);
+    background: var(--primary);
+    opacity: 0;
+    pointer-events: none;
+  }
+  .tab-pill.ready { transition: transform .45s cubic-bezier(.34, 1.4, .5, 1), width .45s cubic-bezier(.34, 1.4, .5, 1), opacity .2s ease; }
   .tabbar .t-long { display: none; }
 
   .view.enter .home-col > * { animation: rise .42s var(--ease-out) .12s both; }
