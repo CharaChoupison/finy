@@ -26,6 +26,10 @@
     close: 'M6 6l12 12M18 6L6 18',
     receipt: 'M6 3h12v18l-3-2-3 2-3-2-3 2zM9 8h6M9 12h6M9 16h3',
     trend: 'M3 17l6-6 4 4 8-8M15 7h6v6',
+    card: 'M5 6h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2zM3 10h18M7 15h4',
+    calendar: 'M5 5h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2zM3 10h18M8 3v4M16 3v4',
+    piggy: 'M12 3a9 9 0 1 0 0 18a9 9 0 0 0 0-18zM12 7v10M15 9.5c-.5-1-1.6-1.5-3-1.5c-1.7 0-3 .8-3 2s1.3 1.7 3 2s3 .8 3 2s-1.3 2-3 2c-1.4 0-2.5-.5-3-1.5',
+    down: 'M6 9l6 6 6-6',
     sliders: 'M4 6h9M17 6h3M15 4v4M4 12h3M11 12h9M9 10v4M4 18h11M19 18h1M17 16v4'
   };
 
@@ -199,7 +203,7 @@
   }
 
   var state = load();
-  var ui = { abosKind: 'sub', abosFilter: 'Tous', abosQuery: '', bilanMetric: 'free', bilanAll: false, calOffset: 0, calSel: null, focusAfter: null, counts: {} };
+  var ui = { abosKind: 'sub', abosFilter: 'Tous', abosQuery: '', bilanMetric: 'free', bilanAll: false, calOffset: 0, calSel: null, focusAfter: null, counts: {}, homeOpen: null };
 
   // ---------- Format ----------
 
@@ -532,84 +536,174 @@
 
   // ---------- Écran : Accueil ----------
 
+  // Accueil. Téléphone : montant sur le fond, actions rondes, répartition en 5 groupes qui se déplient,
+  // enveloppes, à venir, mois par mois. Ordinateur (≥ 960 px, voir styles.css) : en-tête avec les ajouts,
+  // anneau de répartition, chiffres clés et enveloppes en cartes à gauche ; à venir et mois par mois à droite.
   function viewHome() {
     var t = totals();
     var html = '<header class="topbar a-top"><span class="logo">' + LOGO + 'finy</span>' +
       '<a href="#/reglages" class="icon-btn" aria-label="Ouvrir les réglages">' + avatarInner() + '</a></header>';
 
+    html += '<header class="home-head"><div><p class="label">' + cap(longDay.format(today())) + '</p>' +
+      '<h1 class="title">Bonjour' + (state.profile.name ? ' ' + esc(state.profile.name) : '') + '</h1></div>' +
+      '<div class="home-head-actions">' +
+      '<button type="button" class="btn btn-primary" data-action="add-exp">' + icon('plus') + 'Dépense</button>' +
+      '<button type="button" class="btn" data-action="add-sub">' + icon('card') + 'Abonnement</button>' +
+      '<button type="button" class="btn" data-action="add-income">' + icon('trend') + 'Revenu</button>' +
+      '<button type="button" class="btn" data-action="whatif">' + icon('sliders') + 'Et si…</button></div></header>';
+
     if (state.salary <= 0) {
-      html += '<section class="hero a-hero"><p class="label">Bienvenue' + (state.profile.name ? ' ' + esc(state.profile.name) : '') + '</p>' +
+      html += '<section class="hero a-hero home-welcome"><p class="label">Bienvenue' + (state.profile.name ? ' ' + esc(state.profile.name) : '') + '</p>' +
         '<h1 class="title">Commence par ton salaire</h1>' +
         '<p class="muted">Finy calcule ensuite ce qu\'il te reste chaque mois, après ton épargne et tes abonnements.</p>' +
         '<button type="button" class="btn btn-primary btn-block" data-action="edit-salary" style="margin-top:16px">Indiquer mon salaire</button></section>';
     } else {
       // Le montant mis en avant est ce qui est vraiment libre : catégories comprises.
-      html += '<section class="hero a-hero" aria-label="Ce qu\'il te reste"><p class="label">Il te reste ce mois-ci</p>' + hero(t.free, 'free') +
-        '<p class="caption">Après ton épargne, tes objectifs, tes abonnements' + (state.categories.length ? ' et tes catégories' : '') + '</p>' +
-        '<p class="pill-info"><span class="strong">' + euro(t.weekly) + '</span><span class="muted">pour te faire plaisir cette semaine</span></p>' +
-        (forecast() ? '<p class="caption forecast">' + forecastLine(forecast()) + '</p>' : '') +
-        backupNotice() + '</section>';
+      var f = forecast();
+      html += '<section class="hero a-hero home-hero" aria-label="Ce qu\'il te reste"><p class="label">Il te reste ce mois-ci</p>' + hero(t.free, 'free') +
+        '<div class="pills"><p class="pill-info"><span class="strong">' + euro(t.weekly) + '</span><span class="muted">cette semaine</span></p>' +
+        (f ? '<p class="pill-info" title="' + esc(forecastLine(f).replace(/<[^>]+>/g, '')) + '">' + icon('trend', 'pill-ic') + '<span class="strong"' + (f.end < 0 ? ' style="color:var(--danger)"' : '') + '>≈ ' + euro(Math.round(f.end)) + '</span><span class="muted">le ' + f.lastDay + '</span></p>' : '') +
+        '</div>' + (f && f.worst ? '<p class="caption">' + esc(f.worst.name) + ' file vers ' + euro(Math.round(f.worst.proj)) + '.</p>' : '') + '</section>';
     }
+    html += backupNotice() ? '<div class="home-notice">' + backupNotice() + '</div>' : '';
 
     html += '<section class="actions a-actions" aria-label="Actions rapides">' +
       action('add-exp', 'receipt', 'Dépense') + action('add-sub', 'plus', 'Abonnement') +
       action('add-income', 'trend', 'Revenu') + action('whatif', 'sliders', 'Et si…') + '</section>';
 
-    if (state.salary > 0) {
-      var parts = [
-        { name: 'Épargne', value: state.savings, color: 'var(--accent)', href: '#/epargne' },
-        { name: 'Objectifs', value: t.goals, color: 'var(--chart-4)', href: '#/epargne', goals: true },
-        { name: 'Charges fixes', value: t.bills, color: 'var(--chart-5)', go: 'bill' },
-        { name: 'Abonnements', value: t.subs, color: 'var(--chart-2)', go: 'sub' }
-      ];
-      if (t.bills <= 0 && !ofKind('bill').length) parts.splice(2, 1);
-      if (t.goals <= 0) parts.splice(1, 1);
-      state.categories.forEach(function (c, i) {
-        parts.push({ name: c.name, value: catCost(c), color: CAT_PALETTE[i % CAT_PALETTE.length], cat: c });
-      });
-      var bar = parts.concat([{ name: 'Libre', value: Math.max(0, t.free), color: 'var(--border)' }]);
-      var aria = bar.filter(function (p) { return p.value > 0; }).map(function (p) { return p.name + ' ' + euro(p.value); }).join(', ');
-
-      html += '<section class="section a-main"><div class="section-head"><h2 class="heading">Répartition</h2>' +
-        '<button type="button" class="link-btn label" data-action="edit-salary">' + (t.extras > 0 ? 'Revenus ' + euro(t.income) : 'Salaire ' + euro(state.salary)) + '</button></div>' +
-        splitBar(bar, aria) + '<div class="group">' +
-        parts.map(function (p) {
-          if (p.cat) return catRow(p.cat, p.color);
-          var inner = '<span class="dot" style="--c:' + p.color + '" aria-hidden="true"></span><span class="row-main"><span class="row-title">' + esc(p.name) + '</span></span><span class="row-amount">' + euro(p.value) + '</span>';
-          if (p.goals) return '<a class="row" href="' + p.href + '">' + inner + '</a>' + goalRows();
-          if (p.go) return '<button type="button" class="row" data-action="go-abos" data-value="' + p.go + '">' + inner + '</button>';
-          return '<a class="row" href="' + p.href + '">' + inner + '</a>';
-        }).join('') +
-        '<div class="row"><span class="dot" style="--c:var(--border)" aria-hidden="true"></span><span class="row-main"><span class="row-title strong">Libre</span></span>' +
-        '<span class="row-amount"' + (t.free < 0 ? ' style="color:var(--danger)"' : '') + '>' + euro(t.free) + '</span></div>' +
-        '<button type="button" class="row row-link" data-action="add-cat">' + icon('plus') + 'Ajouter une catégorie</button>' +
-        (ofKind('bill').length ? '' : '<button type="button" class="row row-link" data-action="add-bill">' + icon('plus') + 'Ajouter une charge fixe (loyer, énergie…)</button>') + '</div>' +
-        (t.rest < 0 ? '<p class="alert">Tes dépenses fixes dépassent tes revenus. Baisse ton épargne, allonge un objectif ou mets un abonnement en pause.</p>'
-          : t.free < 0 ? '<p class="alert">Tes catégories dépassent ce qu\'il te reste ce mois-ci.</p>' : '') +
-        '</section>';
-    }
+    var colA = '', colB = '';
+    if (state.salary > 0) colA += homeSplit(t) + homeStats(t);
+    colA += homeEnvelopes();
 
     var next = upcoming().slice(0, state.settings.homeCount);
-    html += '<section class="section a-side"><div class="section-head"><h2 class="heading">À venir</h2><a href="#/calendrier" class="label" style="color:var(--accent)">Calendrier</a></div><div class="group">' +
+    colB += '<section class="section a-side"><div class="section-head"><h2 class="heading">À venir</h2><a href="#/calendrier" class="label" style="color:var(--accent)">Calendrier</a></div><div class="group">' +
       (next.length ? next.map(function (u) { return subRow(u, false); }).join('')
         : '<div class="empty"><span>Aucun abonnement pour l\'instant.</span><button type="button" class="link-btn" data-action="add-sub">Ajouter mon premier abonnement</button></div>') +
-      '</div></section>';
-    return html + historySection();
+      '</div></section>' + historySection();
+
+    return html + '<div class="home-col home-col-a">' + colA + '</div><div class="home-col home-col-b">' + colB + '</div>';
   }
 
-  // Catégorie : budget du mois, avec ce qui a déjà été dépensé.
-  function catRow(c, color) {
-    var spent = spentIn(c.id);
-    var over = spent > c.amount;
-    var meta = spent > 0
-      ? (over ? '<span class="soon">Dépassé de ' + euro(spent - c.amount) + '</span>' : '<span>Reste ' + euro(c.amount - spent) + '</span>')
-      : '<span>Rien de dépensé ce mois-ci</span>';
-    var pct = c.amount > 0 ? Math.min(1, spent / c.amount) : (spent > 0 ? 1 : 0);
-    return '<button type="button" class="row tall goal" data-action="edit-cat" data-id="' + esc(c.id) + '">' +
-      '<span class="dot" style="--c:' + color + '" aria-hidden="true"></span>' +
-      '<span class="row-main"><span class="row-title">' + esc(c.name) + '</span><span class="row-meta">' + meta + '</span>' +
-      (spent > 0 ? '<span class="goal-bar' + (over ? ' over' : '') + '" aria-hidden="true"><span style="width:' + (pct * 100).toFixed(1) + '%"></span></span>' : '') +
-      '</span><span class="row-amount">' + (spent > 0 ? euro(spent) + '<small class="per"> / ' + euro(c.amount) + '</small>' : euro(c.amount)) + '</span></button>';
+  // Les 5 groupes de la répartition, avec leur détail.
+  function homeGroups(t) {
+    var goalItems = state.goals.map(function (g) {
+      var p = goalPlan(g);
+      return p.monthly > 0 ? { name: g.name, value: p.monthly, href: '#/epargne' } : null;
+    }).filter(Boolean);
+    var subItems = function (kind) {
+      return ofKind(kind).filter(function (s) { return costThisMonth(s) > 0; }).map(function (s) {
+        return { name: s.name, value: costThisMonth(s), act: 'edit-sub', id: s.id };
+      }).sort(function (a, b) { return b.value - a.value; });
+    };
+    var groups = [
+      { id: 'epargne', name: t.goals > 0 ? 'Épargne et objectifs' : 'Épargne', color: 'var(--accent)', value: state.savings + t.goals,
+        items: (state.savings > 0 ? [{ name: 'Épargne mensuelle', value: state.savings, href: '#/epargne' }] : []).concat(goalItems),
+        more: '<a class="row row-sub-link row-link" href="#/epargne">Voir l\'épargne' + icon('right') + '</a>' },
+      { id: 'fixes', name: 'Charges fixes', color: 'var(--chart-5)', value: t.bills, items: subItems('bill'),
+        more: '<button type="button" class="row row-sub-link row-link" data-action="' + (ofKind('bill').length ? 'go-abos" data-value="bill">Toutes les charges fixes' : 'add-bill">Ajouter une charge fixe') + icon('right') + '</button>' },
+      { id: 'abos', name: 'Abonnements', color: 'var(--chart-2)', value: t.subs, items: subItems('sub'),
+        more: '<button type="button" class="row row-sub-link row-link" data-action="go-abos" data-value="sub">Tous les abonnements' + icon('right') + '</button>' },
+      { id: 'depenses', name: 'Dépenses courantes', color: 'var(--chart-3)', value: t.cats,
+        items: state.categories.map(function (c) { return { name: c.name, value: catCost(c), act: 'edit-cat', id: c.id }; }),
+        more: '<button type="button" class="row row-sub-link row-link" data-action="add-cat">Ajouter une enveloppe' + icon('plus') + '</button>' },
+      { id: 'libre', name: 'Libre', color: 'var(--ink)', value: t.free, items: [] }
+    ];
+    return groups.filter(function (g) { return g.id === 'libre' || g.value > 0 || g.items.length; });
+  }
+
+  // Répartition : barre fine + groupes dépliables (téléphone) ; anneau + même liste dans une carte (ordinateur).
+  function homeSplit(t) {
+    var groups = homeGroups(t);
+    if (ui.homeOpen && !groups.some(function (g) { return g.id === ui.homeOpen && g.items.length; })) ui.homeOpen = null;
+    var open = ui.homeOpen;
+    var total = groups.reduce(function (a, g) { return a + Math.max(0, g.value); }, 0) || 1;
+    var aria = groups.filter(function (g) { return g.value > 0; }).map(function (g) { return g.name + ' ' + euro(g.value); }).join(', ');
+
+    // Anneau : un conic-gradient avec un fin espace entre les parts ; les parts non choisies s'estompent.
+    var stops = [];
+    var acc = 0;
+    groups.forEach(function (g) {
+      if (g.value <= 0) return;
+      var a = acc / total * 100;
+      acc += g.value;
+      var b = acc / total * 100;
+      var col = !open || open === g.id ? g.color : 'color-mix(in srgb, ' + g.color + ' 22%, transparent)';
+      stops.push('transparent ' + a.toFixed(2) + '% ' + (a + 0.35).toFixed(2) + '%', col + ' ' + (a + 0.35).toFixed(2) + '% ' + (b - 0.35).toFixed(2) + '%', 'transparent ' + (b - 0.35).toFixed(2) + '% ' + b.toFixed(2) + '%');
+    });
+    var sel = groups.filter(function (g) { return g.id === open; })[0];
+    var ring = '<div class="ring"><div class="ring-chart" role="img" aria-label="' + esc(aria) + '" style="background:conic-gradient(' + stops.join(', ') + ')"></div>' +
+      '<div class="ring-center"><span class="label">' + (sel ? esc(sel.name) : 'Il te reste') + '</span>' +
+      hero(sel ? sel.value : t.free, sel ? null : 'ring') +
+      (sel && t.income > 0 ? '<span class="caption">' + Math.round(Math.max(0, sel.value) / t.income * 100) + ' % de tes revenus</span>' : '') + '</div></div>';
+
+    var rows = groups.map(function (g) {
+      var isOpen = open === g.id;
+      var pct = t.income > 0 ? Math.round(Math.max(0, g.value) / t.income * 100) : 0;
+      var n = g.items.length;
+      var main = '<span class="dot" style="--c:' + g.color + '" aria-hidden="true"></span>' +
+        '<span class="row-main"><span class="row-title' + (g.id === 'libre' ? ' strong' : '') + '">' + esc(g.name) + '</span>' +
+        '<span class="row-meta"><span>' + (n ? n + (n > 1 ? ' postes' : ' poste') + ' · ' + pct + ' %' : pct + ' % de tes revenus') + '</span></span></span>' +
+        '<span class="row-amount"' + (g.value < 0 ? ' style="color:var(--danger)"' : '') + '>' + euro(g.value) + '</span>';
+      if (!n) return '<div class="hgroup"><div class="row">' + main + '<span class="chev-space" aria-hidden="true"></span></div></div>';
+      return '<div class="hgroup' + (isOpen ? ' open' : '') + '"><button type="button" class="row" data-action="home-group" data-value="' + g.id + '" aria-expanded="' + isOpen + '">' +
+        main + icon('down', 'chev') + '</button>' +
+        (isOpen ? '<div class="hgroup-items">' + g.items.map(function (it) {
+          var inner = '<span class="row-main"><span class="row-title">' + esc(it.name) + '</span></span><span class="row-amount">' + euro(it.value) + '</span>';
+          return it.href ? '<a class="row row-sub" href="' + it.href + '">' + inner + '</a>'
+            : '<button type="button" class="row row-sub" data-action="' + it.act + '" data-id="' + esc(it.id) + '">' + inner + '</button>';
+        }).join('') + (g.more || '') + '</div>' : '') + '</div>';
+    }).join('');
+
+    var bar = splitBar(groups.map(function (g) { return { name: g.name, value: Math.max(0, g.value), color: g.color }; }), aria);
+
+    return '<section class="section home-split"><div class="section-head"><h2 class="heading">Répartition</h2>' +
+      '<button type="button" class="link-btn label" data-action="edit-salary">' + (t.extras > 0 ? 'Revenus ' + euro(t.income) : 'Salaire ' + euro(state.salary)) + '</button></div>' +
+      bar + ring + '<div class="group home-groups">' + rows + '</div>' +
+      (t.rest < 0 ? '<p class="alert">Tes dépenses fixes dépassent tes revenus. Baisse ton épargne, allonge un objectif ou mets un abonnement en pause.</p>'
+        : t.free < 0 ? '<p class="alert">Tes enveloppes dépassent ce qu\'il te reste ce mois-ci.</p>' : '') +
+      '</section>';
+  }
+
+  // Chiffres clés (ordinateur) : semaine, fin de mois, part mise de côté.
+  function homeStats(t) {
+    var f = forecast();
+    var rate = t.income > 0 ? Math.round((state.savings + t.goals) / t.income * 100) : 0;
+    var tile = function (ic, color, value, label) {
+      return '<div class="stat home-stat"><span class="home-stat-ic" style="color:' + color + '">' + icon(ic) + '</span>' +
+        '<span class="stat-val">' + value + '</span><span class="caption">' + label + '</span></div>';
+    };
+    return '<section class="home-stats" aria-label="Chiffres clés">' +
+      tile('calendar', 'var(--accent)', euro(t.weekly), 'pour te faire plaisir cette semaine') +
+      (f ? tile('trend', 'var(--chart-3)', '≈ ' + euro(Math.round(f.end)), 'prévus le ' + f.lastDay + ' au soir')
+        : tile('trend', 'var(--chart-3)', euro(t.income), 'de revenus ce mois-ci')) +
+      tile('piggy', 'var(--chart-4)', rate + ' %', 'de tes revenus mis de côté') + '</section>';
+  }
+
+  // Enveloppes de dépenses : lignes avec barre (téléphone), cartes avec anneau (ordinateur).
+  function homeEnvelopes() {
+    var cats = state.categories;
+    var planned = cats.reduce(function (a, c) { return a + c.amount; }, 0);
+    var rows = cats.map(function (c, i) {
+      var spent = spentIn(c.id);
+      var over = spent > c.amount;
+      var pct = c.amount > 0 ? Math.min(1, spent / c.amount) : (spent > 0 ? 1 : 0);
+      var meta = over ? '<span class="soon">Dépassé de ' + euro(spent - c.amount) + '</span>'
+        : spent > 0 ? '<span>Reste ' + euro(c.amount - spent) + '</span>' : '<span>Rien de dépensé ce mois-ci</span>';
+      return '<button type="button" class="row tall goal env" data-action="edit-cat" data-id="' + esc(c.id) + '">' +
+        '<span class="env-ring" style="--p:' + (pct * 100).toFixed(1) + ';--c:' + (over ? 'var(--warning)' : 'var(--accent)') + '" aria-hidden="true"></span>' +
+        '<span class="row-main"><span class="row-title">' + esc(c.name) + '</span>' +
+        '<span class="goal-bar' + (over ? ' over' : '') + '" aria-hidden="true"><span style="width:' + (pct * 100).toFixed(1) + '%"></span></span>' +
+        '<span class="row-meta">' + meta + '</span></span>' +
+        '<span class="row-amount">' + euro(spent) + '<small class="per"> / ' + euro(c.amount) + '</small></span></button>';
+    }).join('');
+    return '<section class="section home-env"><div class="section-head"><h2 class="heading">Mes enveloppes</h2>' +
+      (cats.length ? '<span class="label">' + euro(planned) + ' prévus</span>' : '') + '</div>' +
+      (cats.length ? '<div class="group env-list">' + rows + '</div>' +
+        '<div class="env-actions"><button type="button" class="link-btn" data-action="add-exp">' + icon('plus') + 'Ajouter une dépense</button>' +
+        '<button type="button" class="link-btn" style="color:var(--muted)" data-action="add-cat">Nouvelle enveloppe</button></div>'
+        : '<div class="group"><div class="empty"><span>Aucune enveloppe pour l\'instant.</span><span class="caption">Réserve une part de ton salaire pour l\'alimentation, l\'essence, les sorties…</span>' +
+          '<button type="button" class="link-btn" data-action="add-cat">Créer une enveloppe</button></div></div>') +
+      '</section>';
   }
 
   // Rappel d'exporter une sauvegarde : 30 jours après la dernière (ou après la première utilisation).
@@ -647,7 +741,9 @@
     if (months.length < 2) return '';
     var name = METRICS[metric];
     var max = months.reduce(function (a, x) { return Math.max(a, Math.abs(x.h[metric] || 0)); }, 0) || 1;
-    var short = new Intl.DateTimeFormat('fr-FR', { month: 'short' });
+    // Au-delà de 8 mois, les barres sont étroites : initiale du mois, et le montant passe sous le graphique.
+    var dense = months.length > 8;
+    var short = new Intl.DateTimeFormat('fr-FR', { month: dense ? 'narrow' : 'short' });
     var prev = months[months.length - 2].h[metric] || 0, cur = months[months.length - 1].h[metric] || 0;
     var delta = cur - prev;
     return '<div class="bars" role="img" aria-label="' + esc(name + ' : ' + months.map(function (x) { return cap(monthName.format(x.d)) + ' ' + euro(x.h[metric] || 0); }).join(', ')) + '">' +
@@ -655,10 +751,10 @@
         var v = x.h[metric] || 0;
         var hgt = Math.max(2, Math.abs(v) / max * 100);
         return '<div class="bar' + (x.now ? ' now' : '') + (v < 0 ? ' neg' : '') + '" title="' + esc(cap(monthName.format(x.d)) + ' · ' + name + ' : ' + euro(v)) + '">' +
-          '<span class="bar-val">' + (x.now ? euro(v) : '') + '</span><span class="bar-col"><i style="height:' + hgt.toFixed(1) + '%"></i></span>' +
+          (dense ? '' : '<span class="bar-val">' + (x.now ? euro(v) : '') + '</span>') + '<span class="bar-col"><i style="height:' + hgt.toFixed(1) + '%"></i></span>' +
           '<span class="bar-m">' + esc(short.format(x.d).replace('.', '')) + '</span></div>';
       }).join('') + '</div>' +
-      '<p class="caption hist-note">' + (Math.abs(delta) < 1 ? 'Comme le mois dernier.' : (delta > 0 ? '+ ' : '− ') + euro(Math.abs(delta)) + ' par rapport au mois dernier.') + '</p>';
+      '<p class="caption hist-note">' + (dense ? '<span class="strong" style="color:var(--ink)">' + cap(new Intl.DateTimeFormat('fr-FR', { month: 'long' }).format(today())) + ' : ' + euro(cur) + '.</span> ' : '') + (Math.abs(delta) < 1 ? 'Comme le mois dernier.' : (delta > 0 ? '+ ' : '− ') + euro(Math.abs(delta)) + ' par rapport au mois dernier.') + '</p>';
   }
 
   // Les 6 derniers mois sur l'accueil : ce qui est resté libre.
@@ -2060,6 +2156,9 @@
         return render();
       case 'bilan-all':
         ui.bilanAll = !ui.bilanAll;
+        return render();
+      case 'home-group':
+        ui.homeOpen = ui.homeOpen === v ? null : v;
         return render();
       case 'go-abos':
         ui.abosKind = v === 'bill' ? 'bill' : 'sub';
