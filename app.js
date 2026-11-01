@@ -107,6 +107,8 @@
         saved: Math.max(0, num(g.saved, 0)),
         months: Math.min(600, Math.max(1, Math.round(num(g.months, 12)))),
         start: isMonthKey(g.start) ? g.start : monthKey(new Date()),
+        open: g.open === true,
+        monthly: Math.max(0, num(g.monthly, 0)),
         deposits: Array.isArray(g.deposits) ? g.deposits.filter(function (d) {
           return d && isMonthKey(d.m) && typeof d.amount === 'number' && d.amount > 0;
         }).map(function (d) { return { m: d.m, amount: d.amount }; }) : []
@@ -204,7 +206,7 @@
   }
 
   var state = load();
-  var ui = { abosKind: 'sub', abosFilter: 'Tous', abosQuery: '', bilanMetric: 'free', bilanAll: false, calOffset: 0, calSel: null, focusAfter: null, counts: {}, homeOpen: null };
+  var ui = { abosKind: 'sub', abosFilter: 'Tous', abosQuery: '', bilanMetric: 'free', bilanMonth: null, bilanAll: false, calOffset: 0, calSel: null, focusAfter: null, counts: {}, homeOpen: null };
 
   // ---------- Format ----------
 
@@ -325,17 +327,26 @@
 
   // Objectif d'épargne : la durée part du mois où il a été créé (ou modifié pour la dernière fois).
   // Le montant du mois est calculé sur ce qui était de côté au début du mois : un versement ne le fait pas baisser.
+  // Sans échéance (`open`), c'est l'inverse : le montant par mois est choisi (ou nul) et la date de fin en découle.
   function goalPlan(g) {
     var t = today();
-    var y = parseInt(g.start.slice(0, 4), 10);
-    var m = parseInt(g.start.slice(5, 7), 10) - 1;
-    var elapsed = (t.getFullYear() - y) * 12 + (t.getMonth() - m);
-    var left = Math.max(1, g.months - Math.max(0, elapsed));
     var k = monthKey(t);
     var paid = g.deposits.reduce(function (a, d) { return a + (d.m === k ? d.amount : 0); }, 0);
     var before = Math.max(0, g.saved - paid);
     var missing = Math.max(0, g.target - before);
-    var monthly = missing > 0 ? Math.ceil(missing / left * 100) / 100 : 0;
+    var left, monthly, end;
+    if (g.open) {
+      left = g.monthly > 0 && missing > 0 ? Math.ceil(missing / g.monthly) : 0;
+      monthly = Math.min(g.monthly, missing);
+      end = left ? new Date(t.getFullYear(), t.getMonth() + left, 1) : null;
+    } else {
+      var y = parseInt(g.start.slice(0, 4), 10);
+      var m = parseInt(g.start.slice(5, 7), 10) - 1;
+      var elapsed = (t.getFullYear() - y) * 12 + (t.getMonth() - m);
+      left = Math.max(1, g.months - Math.max(0, elapsed));
+      monthly = missing > 0 ? Math.ceil(missing / left * 100) / 100 : 0;
+      end = new Date(y, m + g.months, 1);
+    }
     return {
       left: left,
       missing: Math.max(0, g.target - g.saved),
@@ -344,7 +355,7 @@
       paid: paid,
       toGo: Math.max(0, Math.min(monthly - paid, g.target - g.saved)),
       progress: g.target > 0 ? Math.min(1, g.saved / g.target) : 1,
-      end: new Date(y, m + g.months, 1)
+      end: end
     };
   }
 
@@ -548,10 +559,10 @@
     html += '<header class="home-head"><div><p class="label">' + cap(longDay.format(today())) + '</p>' +
       '<h1 class="title">Bonjour' + (state.profile.name ? ' ' + esc(state.profile.name) : '') + '</h1></div>' +
       '<div class="home-head-actions">' +
-      '<button type="button" class="btn btn-primary" data-action="add-exp">' + icon('plus') + 'Dépense</button>' +
       '<button type="button" class="btn" data-action="add-sub">' + icon('card') + 'Abonnement</button>' +
       '<button type="button" class="btn" data-action="add-income">' + icon('trend') + 'Revenu</button>' +
-      '<button type="button" class="btn" data-action="whatif">' + icon('sliders') + 'Et si…</button></div></header>';
+      '<button type="button" class="btn" data-action="whatif">' + icon('sliders') + 'Et si…</button>' +
+      '<button type="button" class="btn btn-primary" data-action="add-exp">' + icon('plus') + 'Dépense</button></div></header>';
 
     if (state.salary <= 0) {
       html += '<section class="hero a-hero home-welcome"><p class="label">Bienvenue' + (state.profile.name ? ' ' + esc(state.profile.name) : '') + '</p>' +
@@ -731,31 +742,61 @@
     for (var i = count - 1; i >= 0; i--) {
       var d = new Date(t.getFullYear(), t.getMonth() - i, 1);
       var h = state.history[monthKey(d)];
-      if (h) months.push({ d: d, h: h, now: i === 0 });
+      if (h) months.push({ d: d, h: h, k: monthKey(d), now: i === 0 });
     }
     return months;
   }
 
   // Barres mois par mois pour une mesure (libre, épargné…), avec l'écart au mois d'avant.
-  function historyChart(count, metric) {
+  // Chaque barre se touche : le mois choisi (`sel`, le mois en cours sinon) est mis en avant et détaillé dans le Bilan.
+  function historyChart(count, metric, sel) {
     var months = historyMonths(count);
     if (months.length < 2) return '';
     var name = METRICS[metric];
+    if (!months.some(function (x) { return x.k === sel; })) sel = months[months.length - 1].k;
     var max = months.reduce(function (a, x) { return Math.max(a, Math.abs(x.h[metric] || 0)); }, 0) || 1;
     // Au-delà de 8 mois, les barres sont étroites : initiale du mois, et le montant passe sous le graphique.
     var dense = months.length > 8;
     var short = new Intl.DateTimeFormat('fr-FR', { month: dense ? 'narrow' : 'short' });
-    var prev = months[months.length - 2].h[metric] || 0, cur = months[months.length - 1].h[metric] || 0;
-    var delta = cur - prev;
-    return '<div class="bars" role="img" aria-label="' + esc(name + ' : ' + months.map(function (x) { return cap(monthName.format(x.d)) + ' ' + euro(x.h[metric] || 0); }).join(', ')) + '">' +
+    var selD = parseIso(sel + '-01');
+    var prevH = state.history[monthKey(new Date(selD.getFullYear(), selD.getMonth() - 1, 1))];
+    var cur = state.history[sel][metric] || 0;
+    var delta = prevH ? cur - (prevH[metric] || 0) : null;
+    var isNow = sel === monthKey(today());
+    return '<div class="bars" role="group" aria-label="' + esc(name + ' mois par mois') + '">' +
       months.map(function (x) {
         var v = x.h[metric] || 0;
         var hgt = Math.max(2, Math.abs(v) / max * 100);
-        return '<div class="bar' + (x.now ? ' now' : '') + (v < 0 ? ' neg' : '') + '" title="' + esc(cap(monthName.format(x.d)) + ' · ' + name + ' : ' + euro(v)) + '">' +
-          (dense ? '' : '<span class="bar-val">' + (x.now ? euro(v) : '') + '</span>') + '<span class="bar-col"><i style="height:' + hgt.toFixed(1) + '%"></i></span>' +
-          '<span class="bar-m">' + esc(short.format(x.d).replace('.', '')) + '</span></div>';
+        return '<button type="button" class="bar' + (x.k === sel ? ' now' : '') + (v < 0 ? ' neg' : '') + '" data-action="hist-month" data-value="' + x.k + '" aria-pressed="' + (x.k === sel) + '" aria-label="' + esc(cap(monthName.format(x.d)) + ' · ' + name + ' : ' + euro(v)) + '">' +
+          (dense ? '' : '<span class="bar-val">' + (x.k === sel ? euro(v) : '') + '</span>') + '<span class="bar-col"><i style="height:' + hgt.toFixed(1) + '%"></i></span>' +
+          '<span class="bar-m">' + esc(short.format(x.d).replace('.', '')) + '</span></button>';
       }).join('') + '</div>' +
-      '<p class="caption hist-note">' + (dense ? '<span class="strong" style="color:var(--ink)">' + cap(new Intl.DateTimeFormat('fr-FR', { month: 'long' }).format(today())) + ' : ' + euro(cur) + '.</span> ' : '') + (Math.abs(delta) < 1 ? 'Comme le mois dernier.' : (delta > 0 ? '+ ' : '− ') + euro(Math.abs(delta)) + ' par rapport au mois dernier.') + '</p>';
+      '<p class="caption hist-note">' + (dense ? '<span class="strong" style="color:var(--ink)">' + cap(new Intl.DateTimeFormat('fr-FR', { month: 'long' }).format(selD)) + ' : ' + euro(cur) + '.</span> ' : '') +
+      (delta === null ? '' : Math.abs(delta) < 1 ? (isNow ? 'Comme le mois dernier.' : 'Comme le mois d\'avant.') : (delta > 0 ? '+ ' : '− ') + euro(Math.abs(delta)) + (isNow ? ' par rapport au mois dernier.' : ' par rapport au mois d\'avant.')) + '</p>';
+  }
+
+  // Détail d'un mois enregistré (Bilan) : la photo du mois, les revenus en plus et les dépenses par enveloppe.
+  function monthDetail(k) {
+    var h = state.history[k];
+    if (!h) return '';
+    var d = parseIso(k + '-01');
+    var extras = state.incomes.filter(function (i) { return i.month === k; });
+    var byCat = {};
+    state.expenses.forEach(function (x) { if (x.date.slice(0, 7) === k) byCat[x.cat] = (byCat[x.cat] || 0) + x.amount; });
+    var catRows = state.categories.map(function (c, i) {
+      return byCat[c.id] ? calcRow(esc(c.name) + ' (dépensé)', euro(byCat[c.id]), CAT_PALETTE[i % CAT_PALETTE.length]) : '';
+    }).join('');
+    return '<div class="section-head"><h3 class="heading">' + cap(monthName.format(d)) + '</h3>' +
+      (k === monthKey(today()) ? '<span class="label">En cours</span>' : '') + '</div>' +
+      '<div class="group">' +
+      calcRow('Revenus', euro(h.income), 'var(--ink)') +
+      extras.map(function (i) { return calcRow('dont ' + esc(i.name), '+ ' + euro(i.amount), 'var(--ink)'); }).join('') +
+      calcRow('Mis de côté', '− ' + euro(h.saved), 'var(--accent)') +
+      (h.bills > 0 ? calcRow('Charges fixes', '− ' + euro(h.bills), 'var(--chart-5)') : '') +
+      calcRow('Abonnements', '− ' + euro(h.subs), 'var(--chart-2)') +
+      (h.cats > 0 ? calcRow('Enveloppes', '− ' + euro(h.cats), 'var(--chart-3)') : '') + catRows +
+      '<div class="row"><span class="dot" style="--c:var(--ink)" aria-hidden="true"></span><span class="row-main"><span class="strong">Libre</span></span>' +
+      '<span class="row-amount"' + (h.free < 0 ? ' style="color:var(--danger)"' : '') + '>' + euro(h.free) + '</span></div></div>';
   }
 
   // Les 6 derniers mois sur l'accueil : ce qui est resté libre.
@@ -770,7 +811,7 @@
   function goalRows() {
     return state.goals.map(function (g) {
       var p = goalPlan(g);
-      if (p.missing <= 0) return '';
+      if (p.missing <= 0 || p.monthly <= 0) return '';
       return '<a class="row row-sub" href="#/epargne"><span class="row-main"><span class="row-title">' + esc(g.name) + '</span></span>' +
         '<span class="row-amount">' + euro(p.monthly) + '</span></a>';
     }).join('');
@@ -1029,16 +1070,17 @@
     var html = '<div class="goal-list">' + state.goals.map(function (g) {
       var p = goalPlan(g);
       // Où en est le versement du mois : à jour, ou ce qu'il reste à verser.
-      var status = p.done || p.monthly <= 0 ? ''
+      var status = p.done ? ''
+        : p.monthly <= 0 ? (g.open ? '<span class="muted">Verse quand tu veux</span>' : '')
         : p.toGo <= 0 ? '<span class="ok">✓ À jour ce mois-ci</span>'
         : '<span class="muted">Encore <span class="strong" style="color:var(--ink)">' + short(p.toGo) + '</span> <span style="white-space:nowrap">ce mois-ci</span></span>';
       return '<div class="goal-card' + (p.done ? ' done' : '') + '">' +
         '<button type="button" class="goal-main" data-action="edit-goal" data-id="' + esc(g.id) + '">' +
         '<span class="goal-top"><span class="goal-name">' + esc(g.name) + '</span>' +
-        '<span class="goal-monthly">' + (p.done ? '<span class="ok">✓ Atteint</span>' : short(p.monthly) + '<small>/mois</small>') + '</span></span>' +
+        '<span class="goal-monthly">' + (p.done ? '<span class="ok">✓ Atteint</span>' : p.monthly > 0 ? short(p.monthly) + '<small>/mois</small>' : '<small>Libre</small>') + '</span></span>' +
         '<span class="goal-bar" role="img" aria-label="' + Math.round(p.progress * 100) + ' % de l\'objectif"><span style="width:' + (p.progress * 100).toFixed(1) + '%"></span></span>' +
         '<span class="goal-foot"><span><span class="strong">' + short(g.saved) + '</span> sur ' + short(g.target) + '</span>' +
-        '<span>' + (p.done ? '' : endFmt.format(p.end)) + '</span></span></button>' +
+        '<span>' + (p.done ? '' : !p.end ? 'Sans échéance' : (g.open ? 'vers ' : '') + endFmt.format(p.end)) + '</span></span></button>' +
         (status ? '<div class="goal-status">' + status +
           '<button type="button" class="btn btn-sm" data-action="goal-deposit" data-id="' + esc(g.id) + '">' + icon('plus') + 'Verser</button></div>' : '') +
         '</div>';
@@ -1052,20 +1094,25 @@
   function editGoal(id) {
     var g = state.goals.filter(function (x) { return x.id === id; })[0];
     var isNew = !g;
-    var left = g ? goalPlan(g).left : 12;
+    var open = g ? g.open : false;
+    var left = g && !open ? goalPlan(g).left : 12;
     var inYears = left % 12 === 0;
     var body = '<label class="field"><span>Nom</span><input class="input" name="name" type="text" maxlength="40" autocomplete="off" placeholder="Voyage au Japon, voiture…" value="' + esc(g ? g.name : '') + '"></label>' +
       '<div class="field-row">' + amountField('target', 'Montant à atteindre (€)', g ? g.target : 0) + amountField('saved', 'Déjà de côté (€)', g ? g.saved : 0) + '</div>' +
-      '<div class="field-row"><label class="field"><span>' + (isNew ? 'Durée' : 'Temps restant') + '</span><input class="input" name="duration" type="text" inputmode="numeric" autocomplete="off" placeholder="12" value="' + (inYears ? left / 12 : left) + '"></label>' +
+      '<div class="field"><span>Échéance</span><div class="segmented" role="radiogroup" aria-label="Échéance">' +
+      '<label class="seg-opt"><input type="radio" name="term" value="fixed"' + (open ? '' : ' checked') + '><span>Avec une durée</span></label>' +
+      '<label class="seg-opt"><input type="radio" name="term" value="open"' + (open ? ' checked' : '') + '><span>Indéterminée</span></label></div></div>' +
+      '<div class="field-row" id="goal-fixed"' + (open ? ' hidden' : '') + '><label class="field"><span>' + (isNew ? 'Durée' : 'Temps restant') + '</span><input class="input" name="duration" type="text" inputmode="numeric" autocomplete="off" placeholder="12" value="' + (inYears ? left / 12 : left) + '"></label>' +
       '<div class="field"><span>&nbsp;</span><div class="segmented" role="radiogroup" aria-label="Unité de durée">' +
       '<label class="seg-opt"><input type="radio" name="unit" value="month"' + (inYears ? '' : ' checked') + '><span>Mois</span></label>' +
       '<label class="seg-opt"><input type="radio" name="unit" value="year"' + (inYears ? ' checked' : '') + '><span>Ans</span></label></div></div></div>' +
+      '<div id="goal-open"' + (open ? '' : ' hidden') + '>' + amountField('monthly', 'Par mois (€, facultatif)', g ? g.monthly : 0) + '</div>' +
       '<p class="pill-info" id="goal-preview" aria-live="polite"></p>';
     var del = isNew ? '' : '<button type="button" class="btn btn-danger btn-block" data-action="delete-goal" data-id="' + esc(id) + '">Supprimer cet objectif</button>';
     openSheet(isNew ? 'Nouvel objectif' : 'Modifier l\'objectif', body, isNew ? 'Créer l\'objectif' : 'Enregistrer', function (data) {
       var r = readGoalForm(data);
       if (typeof r === 'string') return r;
-      var item = { id: isNew ? uid() : id, name: r.name, target: r.target, saved: r.saved, months: r.months, start: monthKey(today()), deposits: isNew ? [] : g.deposits };
+      var item = { id: isNew ? uid() : id, name: r.name, target: r.target, saved: r.saved, months: r.months, start: monthKey(today()), open: r.open, monthly: r.monthly, deposits: isNew ? [] : g.deposits };
       if (isNew) state.goals.push(item);
       else state.goals = state.goals.map(function (x) { return x.id === id ? item : x; });
       toast(isNew ? 'Objectif créé' : 'Objectif modifié');
@@ -1104,12 +1151,7 @@
     }
     var last = catId || (state.expenses.length ? state.expenses[state.expenses.length - 1].cat : null);
     if (!state.categories.some(function (c) { return c.id === last; })) last = state.categories[0].id;
-    qe = { s: '', cat: last, date: iso(today()), note: '', opener: document.activeElement };
-
-    var keys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', ','].map(function (k) {
-      return '<button type="button" class="qe-key" data-action="qe-key" data-value="' + k + '">' + k + '</button>';
-    }).join('') + '<button type="button" class="qe-key" data-action="qe-key" data-value="0">0</button>' +
-      '<button type="button" class="qe-key" data-action="qe-back" aria-label="Effacer">' + icon('backspace') + '</button>';
+    qe = { kind: 'exp', s: '', cat: last, date: iso(today()), note: '', opener: document.activeElement };
 
     var el = document.getElementById('quick');
     el.innerHTML = '<div class="qe-panel">' +
@@ -1125,8 +1167,39 @@
       }).join('') + '</div>' +
       '<label class="qe-note"><span class="sr-only">Note</span><input type="text" maxlength="60" autocomplete="off" placeholder="Ajouter une note (courses, plein…)" data-input="qe-note"></label>' +
       '<button type="button" class="btn btn-primary btn-block qe-submit" data-action="qe-submit" disabled>Ajouter</button>' +
-      '<div class="qe-pad">' + keys + '</div></div>';
+      '<div class="qe-pad">' + qeKeys() + '</div></div>';
+    qeOpen(el);
+  }
 
+  // Revenu en plus, même saisie que la dépense : montant au pavé, puis un nom proposé ou tapé. Compté pour le mois en cours.
+  var INCOME_NAMES = ['Prime', 'Remboursement', 'Petit boulot', 'Vente', 'Cadeau'];
+
+  function addIncome() {
+    qe = { kind: 'inc', s: '', note: '', opener: document.activeElement };
+    var el = document.getElementById('quick');
+    el.innerHTML = '<div class="qe-panel">' +
+      '<header class="qe-head">' +
+      '<button type="button" class="icon-btn" data-action="qe-close" aria-label="Fermer">' + icon('close') + '</button>' +
+      '<h2 class="qe-title" id="quick-title">Nouveau revenu</h2>' +
+      '<span class="qe-date qe-month">' + cap(new Intl.DateTimeFormat('fr-FR', { month: 'long' }).format(today())) + '</span></header>' +
+      '<div class="qe-amount-wrap"><p class="qe-amount" id="qe-amount" aria-live="polite"></p><p class="qe-hint" id="qe-hint"></p></div>' +
+      '<div class="qe-cats chips" role="radiogroup" aria-label="Type de revenu">' + INCOME_NAMES.map(function (n) {
+        return '<button type="button" class="chip qe-cat" role="radio" data-action="qe-name" data-value="' + n + '">' + n + '</button>';
+      }).join('') + '</div>' +
+      '<label class="qe-note"><span class="sr-only">Nom du revenu</span><input type="text" maxlength="40" autocomplete="off" placeholder="Nom du revenu (facultatif)" data-input="qe-note"></label>' +
+      '<button type="button" class="btn btn-primary btn-block qe-submit" data-action="qe-submit" disabled>Ajouter</button>' +
+      '<div class="qe-pad">' + qeKeys() + '</div></div>';
+    qeOpen(el);
+  }
+
+  function qeKeys() {
+    return ['1', '2', '3', '4', '5', '6', '7', '8', '9', ','].map(function (k) {
+      return '<button type="button" class="qe-key" data-action="qe-key" data-value="' + k + '">' + k + '</button>';
+    }).join('') + '<button type="button" class="qe-key" data-action="qe-key" data-value="0">0</button>' +
+      '<button type="button" class="qe-key" data-action="qe-back" aria-label="Effacer">' + icon('backspace') + '</button>';
+  }
+
+  function qeOpen(el) {
     el.hidden = false;
     document.body.classList.add('qe-open');
     qeUpdate();
@@ -1152,8 +1225,17 @@
     amount.classList.toggle('long', shown.length > 7);
 
     var v = qeValue();
-    var c = state.categories.filter(function (x) { return x.id === qe.cat; })[0];
     var hint = document.getElementById('qe-hint');
+    el.querySelector('.qe-submit').disabled = !(v > 0);
+    if (qe.kind === 'inc') {
+      var free = totals().free;
+      hint.className = 'qe-hint';
+      hint.textContent = v <= 0 ? 'S\'ajoute à ton salaire pour ' + monthName.format(today()) + ' seulement'
+        : 'Il te restera ' + euro(free + v) + ' ce mois-ci';
+      el.querySelectorAll('.qe-cat').forEach(function (b) { b.setAttribute('aria-checked', String(b.dataset.value === qe.note.trim())); });
+      return;
+    }
+    var c = state.categories.filter(function (x) { return x.id === qe.cat; })[0];
     if (c && qe.date.slice(0, 7) === monthKey(today())) {
       var after = c.amount - spentIn(c.id) - v;
       hint.className = 'qe-hint' + (after < 0 ? ' over' : '');
@@ -1165,7 +1247,6 @@
     }
 
     el.querySelectorAll('.qe-cat').forEach(function (b) { b.setAttribute('aria-checked', String(b.dataset.id === qe.cat)); });
-    el.querySelector('.qe-submit').disabled = !(v > 0);
     var t = today();
     var d = parseIso(qe.date);
     var diff = diffDays(t, d);
@@ -1209,6 +1290,13 @@
     if (!qe) return;
     var v = qeValue();
     if (!(v > 0)) return;
+    if (qe.kind === 'inc') {
+      state.incomes.push({ id: uid(), name: qe.note.trim().slice(0, 40) || 'Revenu', amount: v, month: monthKey(today()) });
+      qeClose();
+      save();
+      render();
+      return toast('+ ' + euro(v) + ' · il te reste ' + euro(totals().free));
+    }
     var date = isIsoDate(qe.date) && qe.date <= iso(today()) ? qe.date : iso(today());
     state.expenses.push({ id: uid(), cat: qe.cat, amount: v, date: date, note: qe.note.trim().slice(0, 60) });
     var c = state.categories.filter(function (x) { return x.id === qe.cat; })[0];
@@ -1261,10 +1349,15 @@
     if (!name) return 'Donne un nom à cet objectif.';
     if (target === null || target <= 0) return 'Indique le montant à atteindre, par exemple 2 000.';
     if (saved === null) return 'Indique ce que tu as déjà de côté, ou laisse le champ vide.';
+    if (data.term === 'open') {
+      var monthly = (data.monthly || '').trim() ? parseAmount(data.monthly) : 0;
+      if (monthly === null) return 'Indique combien mettre de côté par mois, ou laisse le champ vide.';
+      return { name: name, target: target, saved: saved, months: 12, open: true, monthly: monthly };
+    }
     if (!/^\d+$/.test(String(data.duration || '').trim()) || n < 1) return 'Indique une durée, par exemple 12 mois ou 2 ans.';
     var months = data.unit === 'year' ? n * 12 : n;
     if (months > 600) return 'Choisis une durée de 50 ans au plus.';
-    return { name: name, target: target, saved: saved, months: months };
+    return { name: name, target: target, saved: saved, months: months, open: false, monthly: 0 };
   }
 
   // Aperçu en direct du montant mensuel dans la fenêtre de l'objectif.
@@ -1274,15 +1367,19 @@
     var data = {};
     new FormData(sheetForm).forEach(function (v, k) { data[k] = v; });
     data.name = data.name || '-';
+    var open = data.term === 'open';
+    document.getElementById('goal-fixed').hidden = open;
+    document.getElementById('goal-open').hidden = !open;
     var r = readGoalForm(data);
     if (typeof r === 'string') {
-      out.innerHTML = '<span class="muted">Indique un montant et une durée pour voir combien mettre de côté chaque mois.</span>';
+      out.innerHTML = '<span class="muted">' + (open ? 'Indique le montant à atteindre.' : 'Indique un montant et une durée pour voir combien mettre de côté chaque mois.') + '</span>';
       return;
     }
     var missing = Math.max(0, r.target - r.saved);
-    out.innerHTML = missing > 0
-      ? '<span class="strong">' + euro(Math.ceil(missing / r.months * 100) / 100) + ' par mois</span><span class="muted">pendant ' + durationLabel(r.months) + '</span>'
-      : '<span class="strong">Objectif déjà atteint</span>';
+    out.innerHTML = missing <= 0 ? '<span class="strong">Objectif déjà atteint</span>'
+      : !open ? '<span class="strong">' + euro(Math.ceil(missing / r.months * 100) / 100) + ' par mois</span><span class="muted">pendant ' + durationLabel(r.months) + '</span>'
+      : r.monthly > 0 ? '<span class="strong">Atteint dans ' + durationLabel(Math.ceil(missing / r.monthly)) + '</span><span class="muted">à ' + euro(r.monthly) + ' par mois</span>'
+      : '<span class="strong">Sans échéance</span><span class="muted">rien de réservé, tu verses quand tu veux</span>';
   }
 
   function calcRow(label, value, color) {
@@ -1324,12 +1421,13 @@
     html += '</section>';
 
     // Le graphique sur 12 mois, avec la mesure au choix.
-    var chart = historyChart(12, ui.bilanMetric);
+    var chart = historyChart(12, ui.bilanMetric, ui.bilanMonth);
     html += '<section class="section a-main"><div class="section-head"><h2 class="heading">Sur 12 mois</h2></div>' +
       '<div class="chips" role="group" aria-label="Mesure affichée">' + Object.keys(METRICS).map(function (k) {
         return '<button type="button" class="chip" data-action="bilan-metric" data-value="' + k + '" aria-pressed="' + (k === ui.bilanMetric) + '">' + METRICS[k] + '</button>';
       }).join('') + '</div>' +
-      '<div class="group hist">' + (chart || '<div class="empty"><span>Finy garde une photo de chaque mois quand tu l\'ouvres.</span><span class="caption">Le graphique apparaîtra dès le mois prochain.</span></div>') + '</div></section>';
+      '<div class="group hist">' + (chart || '<div class="empty"><span>Finy garde une photo de chaque mois quand tu l\'ouvres.</span><span class="caption">Le graphique apparaîtra dès le mois prochain.</span></div>') + '</div>' +
+      (chart ? '<p class="caption">Touche un mois pour voir son détail.</p><div class="month-detail" id="month-detail">' + monthDetail(state.history[ui.bilanMonth] ? ui.bilanMonth : monthKey(today())) + '</div>' : '') + '</section>';
 
     // Où part l'argent : chaque abonnement, charge et catégorie du mois, du plus cher au moins cher.
     var items = state.subs.filter(function (s) { return costThisMonth(s) > 0; }).map(function (s) {
@@ -2298,6 +2396,10 @@
       case 'bilan-metric':
         ui.bilanMetric = METRICS[v] ? v : 'free';
         return render();
+      case 'hist-month':
+        ui.bilanMonth = isMonthKey(v) ? v : null;
+        if (currentRoute() !== 'bilan') { location.hash = '#/bilan'; return; }
+        return render();
       case 'bilan-all':
         ui.bilanAll = !ui.bilanAll;
         return render();
@@ -2340,6 +2442,11 @@
       case 'qe-key': return qeKey(v);
       case 'qe-back': return qeBack();
       case 'qe-cat': if (qe) { qe.cat = id; qeUpdate(); } return;
+      case 'qe-name':
+        if (!qe) return;
+        qe.note = qe.note.trim() === v ? '' : v;
+        document.querySelector('[data-input="qe-note"]').value = qe.note;
+        return qeUpdate();
       case 'qe-close': return qeClose();
       case 'qe-submit': return qeSubmit();
       case 'add-exp-in': return editExpense(id);
@@ -2347,7 +2454,7 @@
         state.expenses = state.expenses.filter(function (x) { return x.id !== id; });
         save(); render(); toast('Dépense supprimée');
         return editCat(el.dataset.cat);
-      case 'add-income': return editIncome(null);
+      case 'add-income': return addIncome();
       case 'edit-income': return editIncome(id);
       case 'delete-income':
         if (!window.confirm('Supprimer ce revenu ?')) return;
@@ -2410,7 +2517,7 @@
 
   document.addEventListener('input', function (e) {
     var el = e.target;
-    if (el.dataset.input === 'qe-note' && qe) { qe.note = el.value; return; }
+    if (el.dataset.input === 'qe-note' && qe) { qe.note = el.value; if (qe.kind === 'inc') qeUpdate(); return; }
     if (sheetForm.dataset.kind === 'goal' && sheetForm.contains(el)) return previewGoal();
     if (sheetForm.dataset.kind === 'whatif' && sheetForm.contains(el)) return previewWhatIf();
     switch (el.dataset.input) {

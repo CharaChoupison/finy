@@ -114,6 +114,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 button { cursor: pointer; }
 a { color: var(--accent); text-decoration: none; }
 h1, h2, h3, p { margin: 0; }
+[hidden] { display: none !important; }
 
 :focus-visible {
   outline: 2px solid var(--accent);
@@ -243,7 +244,8 @@ svg { width: 24px; height: 24px; flex: none; fill: none; stroke: currentColor; s
 .segmented { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 4px; padding: 4px; border-radius: var(--radius-full); background: var(--surface); }
 .segmented.inline { display: inline-grid; background: var(--surface-raised); }
 .segmented button { min-height: 40px; min-width: 44px; border: 0; border-radius: var(--radius-full); background: transparent; font-size: 14px; font-weight: 600; }
-.segmented.inline button { min-height: 36px; }
+.segmented.inline { flex: none; grid-auto-columns: auto; }
+.segmented.inline button { min-height: 36px; padding: 0 14px; white-space: nowrap; }
 .segmented button[aria-checked="true"] { background: var(--primary); color: var(--on-primary); }
 .hero > .segmented { align-self: flex-start; margin-top: var(--space-2); background: var(--surface); }
 .seg-opt { position: relative; display: flex; }
@@ -675,7 +677,9 @@ button.row:active, a.row:active { transform: scale(.985); }
 
 .hist { padding: var(--space-4); display: flex; flex-direction: column; gap: var(--space-3); }
 .bars { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: var(--space-2); align-items: end; height: 150px; }
-.bar { display: flex; flex-direction: column; align-items: center; gap: 4px; height: 100%; min-width: 0; }
+.bar { display: flex; flex-direction: column; align-items: center; gap: 4px; height: 100%; min-width: 0; padding: 0; border: 0; background: none; color: var(--ink); cursor: pointer; }
+.bar:active .bar-col i { transform: scaleY(.96); transform-origin: bottom; }
+.month-detail { display: flex; flex-direction: column; gap: var(--space-3); margin-top: var(--space-2); }
 .bar-val { font-size: 12px; line-height: 16px; font-weight: 600; white-space: nowrap; min-height: 16px; }
 .bar-col { flex: 1 1 auto; width: 100%; max-width: 36px; display: flex; align-items: flex-end; }
 .bar-col i { display: block; width: 100%; border-radius: 4px 4px 0 0; background: var(--chart-2); }
@@ -736,13 +740,14 @@ button.row:active, a.row:active { transform: scale(.985); }
 .env-actions .link-btn { display: inline-flex; align-items: center; gap: 4px; }
 
 @media (max-width: 959px) {
-  :root { --tabbar-h: 84px; }
+  /* La pilule descend dans la zone de la barre d'accueil de l'iPhone, sans toucher le trait */
+  :root { --tabbar-h: 84px; --tabbar-gap: max(10px, calc(var(--safe-bottom) - 14px)); }
 
   /* Barre d'onglets flottante en pilule, onglet actif rempli */
   .tabbar {
     left: max(16px, env(safe-area-inset-left));
     right: max(16px, env(safe-area-inset-right));
-    bottom: calc(var(--safe-bottom) + 12px);
+    bottom: var(--tabbar-gap);
     height: 66px;
     padding: 6px;
     border: 1px solid var(--border);
@@ -879,7 +884,7 @@ button.row:active, a.row:active { transform: scale(.985); }
   .fab {
     position: fixed;
     right: max(16px, env(safe-area-inset-right));
-    bottom: calc(var(--safe-bottom) + 12px + 66px + 14px);
+    bottom: calc(var(--tabbar-gap) + 66px + 14px);
     z-index: 11;
     display: inline-flex;
     align-items: center;
@@ -903,7 +908,7 @@ button.row:active, a.row:active { transform: scale(.985); }
   .fab:active { transform: scale(.94); }
   /* Place pour que le bouton ne cache pas le bas des listes */
   .view { padding-bottom: calc(var(--tabbar-h) + var(--safe-bottom) + 96px); }
-  .toast { bottom: calc(var(--safe-bottom) + 12px + 66px + 84px); }
+  .toast { bottom: calc(var(--tabbar-gap) + 66px + 84px); }
 }
 
 /* ---------- Saisie rapide d'une dépense ---------- */
@@ -927,6 +932,7 @@ body.qe-open .fab { display: none; }
 .qe-title { margin: 0; font-size: 17px; line-height: 22px; font-weight: 600; text-align: center; }
 .qe-date { position: relative; display: inline-flex; align-items: center; gap: 4px; min-height: 36px; padding: 0 12px; border-radius: var(--radius-full); background: var(--surface); font-size: 14px; font-weight: 600; cursor: pointer; }
 .qe-date svg { width: 16px; height: 16px; stroke-width: 2; }
+.qe-month { cursor: default; }
 .qe-date input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
 .qe-amount-wrap { flex: 1 1 auto; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; min-height: 120px; }
 .qe-amount { display: flex; align-items: center; margin: 0; font-size: 64px; line-height: 72px; font-weight: 700; letter-spacing: -0.03em; }
