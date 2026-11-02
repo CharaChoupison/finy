@@ -6,7 +6,7 @@
 
   var STORE_KEY = 'finy:v1';
   // Affichée en bas des Réglages. À incrémenter avec CACHE dans sw.js à chaque mise à jour.
-  var APP_VERSION = 24;
+  var APP_VERSION = 27;
   var SUB_CATEGORIES = ['Streaming', 'Logiciels', 'Téléphonie', 'Sport', 'Jeux', 'Transport', 'Maison', 'Autre'];
   var BILL_CATEGORIES = ['Logement', 'Énergie', 'Assurance', 'Crédit', 'Impôts', 'Santé', 'Autre'];
   var CAT_PALETTE = ['var(--chart-3)', 'var(--chart-4)', 'var(--ink)', 'var(--muted)'];
@@ -1280,11 +1280,34 @@
     qeOpen(el);
   }
 
-  function qeKeys() {
+  function qeKeys() { return padKeys('data-action="qe-key"', 'data-action="qe-back"'); }
+
+  // Pavé numérique partagé par la saisie rapide et les montants du parcours.
+  function padKeys(on, back) {
     return ['1', '2', '3', '4', '5', '6', '7', '8', '9', ','].map(function (k) {
-      return '<button type="button" class="qe-key" data-action="qe-key" data-value="' + k + '">' + k + '</button>';
-    }).join('') + '<button type="button" class="qe-key" data-action="qe-key" data-value="0">0</button>' +
-      '<button type="button" class="qe-key" data-action="qe-back" aria-label="Effacer">' + icon('backspace') + '</button>';
+      return '<button type="button" class="qe-key" ' + on + ' data-value="' + k + '">' + k + '</button>';
+    }).join('') + '<button type="button" class="qe-key" ' + on + ' data-value="0">0</button>' +
+      '<button type="button" class="qe-key" ' + back + ' aria-label="Effacer">' + icon('backspace') + '</button>';
+  }
+
+  // Ajoute une touche au montant tapé : une virgule, deux décimales et six chiffres avant la virgule au plus. null si refusée.
+  function padType(s, k) {
+    if (k === ',') return s.indexOf(',') >= 0 ? null : (s || '0') + ',';
+    var p = s.split(',');
+    if (p.length > 1 && p[1].length >= 2) return null;
+    if (p.length === 1 && p[0].replace(/^0+/, '').length >= 6) return null;
+    return s === '0' ? k : s + k;
+  }
+
+  // « 1234,5 » → « 1 234,5 ».
+  function padShown(s) {
+    var parts = (s || '0').replace(/[\s  ]/g, '').split(',');
+    return parts[0].replace(/^0+(?=\d)/, '').replace(/\B(?=(\d{3})+(?!\d))/g, ' ') + (parts.length > 1 ? ',' + parts[1] : '');
+  }
+
+  // Le montant en grand, curseur après les chiffres. « fresh » : déjà rempli, la première touche le remplace.
+  function padHtml(s, fresh) {
+    return '<span class="qe-num' + (s ? fresh ? ' fresh' : '' : ' empty') + '">' + padShown(s) + '</span><span class="qe-caret" aria-hidden="true"></span><span class="qe-cur">€</span>';
   }
 
   function qeOpen(el) {
@@ -1305,12 +1328,9 @@
   function qeUpdate() {
     if (!qe) return;
     var el = document.getElementById('quick');
-    var parts = (qe.s || '0').split(',');
-    var int = parts[0].replace(/^0+(?=\d)/, '').replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
-    var shown = int + (parts.length > 1 ? ',' + parts[1] : '');
     var amount = document.getElementById('qe-amount');
-    amount.innerHTML = '<span class="qe-num' + (qe.s ? '' : ' empty') + '">' + shown + '</span><span class="qe-caret" aria-hidden="true"></span><span class="qe-cur">€</span>';
-    amount.classList.toggle('long', shown.length > 7);
+    amount.innerHTML = padHtml(qe.s);
+    amount.classList.toggle('long', padShown(qe.s).length > 7);
 
     var v = qeValue();
     var hint = document.getElementById('qe-hint');
@@ -1343,16 +1363,8 @@
 
   function qeKey(k) {
     if (!qe) return;
-    var s = qe.s;
-    if (k === ',') {
-      if (s.indexOf(',') >= 0) return;
-      s = (s || '0') + ',';
-    } else {
-      var p = s.split(',');
-      if (p.length > 1 && p[1].length >= 2) return;
-      if (p.length === 1 && p[0].replace(/^0+/, '').length >= 6) return;
-      s = s === '0' ? k : s + k;
-    }
+    var s = padType(qe.s, k);
+    if (s === null) return;
     qe.s = s;
     if (navigator.vibrate) navigator.vibrate(8);
     qeUpdate();
@@ -2807,6 +2819,22 @@
     obRender();
   }
 
+  // Le parcours suit la partie visible de l'écran : « Continuer » reste au-dessus du clavier,
+  // et l'écran reprend toute la hauteur quand le clavier se ferme (iOS garde parfois une hauteur réduite).
+  function obFit() {
+    var vv = window.visualViewport;
+    if (!vv || obEl.hidden) return;
+    var field = document.activeElement && obEl.contains(document.activeElement) && /^(INPUT|TEXTAREA)$/.test(document.activeElement.tagName);
+    var kb = !!field && window.innerHeight - vv.height > 120;
+    obEl.style.top = kb ? vv.offsetTop + 'px' : '';
+    obEl.style.height = kb ? vv.height + 'px' : '';
+    obEl.classList.toggle('kb', kb);
+  }
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', obFit);
+    window.visualViewport.addEventListener('scroll', obFit);
+  }
+
   function obClose() {
     obEl.hidden = true;
     obEl.innerHTML = '';
@@ -2837,8 +2865,8 @@
     var bad = function (msg, sel) { return { msg: msg, sel: sel }; };
     if (step === 'salary') {
       var n = parseAmount(a.salary);
-      if (n === null || n <= 0) return bad('Indique ton salaire net par mois, par exemple 1 800.', '[data-ob-f="salary"]');
-      if (n > 1000000) return bad('Ce montant paraît bien élevé : vérifie-le.', '[data-ob-f="salary"]');
+      if (n === null || n <= 0) return bad('Indique ton salaire net par mois, par exemple 1 800.', '#ob-amount');
+      if (n > 1000000) return bad('Ce montant paraît bien élevé : vérifie-le.', '#ob-amount');
     }
     if (OB_LIST[step]) {
       var list = OB_LIST[step];
@@ -2853,8 +2881,8 @@
     }
     if (step === 'savings' && (a.savings || '').trim()) {
       var v = parseAmount(a.savings);
-      if (v === null) return bad('Indique un montant, par exemple 100.', '[data-ob-f="savings"]');
-      if (v > obSalary()) return bad('C\'est plus que ton salaire : choisis un montant plus petit.', '[data-ob-f="savings"]');
+      if (v === null) return bad('Indique un montant, par exemple 100.', '#ob-amount');
+      if (v > obSalary()) return bad('C\'est plus que ton salaire : choisis un montant plus petit.', '#ob-amount');
     }
     if (step === 'goal') {
       var seen = {};
@@ -3103,18 +3131,36 @@
       (rows ? '<div class="ob-items"><p class="label">' + (group === 'envs' ? 'Budget par mois' : 'Montant par mois et jour du prélèvement') + '</p>' + rows + '</div>' : '');
   }
 
-  // Grand montant centré, comme dans « Nouvelle dépense ». La largeur suit le texte tapé (voir obAmountSize).
+  // Montant saisi au pavé de Finy, comme dans « Nouvelle dépense » : le clavier du téléphone ne s'ouvre pas.
+  var obPadFresh = false;
+
   function obAmount(label, value, f) {
-    return '<label class="ob-amount' + ((value || '').length > 7 ? ' long' : '') + '"><span class="sr-only">' + label + '</span>' +
-      '<span class="ob-amount-num" data-value="' + esc(value || '0') + '"><input type="text" inputmode="decimal" autocomplete="off" placeholder="0" value="' + esc(value) + '" data-ob-f="' + f + '"></span>' +
-      '<span class="ob-amount-cur" aria-hidden="true">€</span></label>';
+    return '<div class="qe-amount-wrap ob-amount-wrap"><p class="sr-only" id="ob-amount-label">' + label + '</p>' +
+      '<p class="qe-amount' + (padShown(value).length > 7 ? ' long' : '') + '" id="ob-amount" data-f="' + f + '" tabindex="-1" aria-live="polite" aria-labelledby="ob-amount-label ob-amount">' + padHtml(value, true) + '</p></div>';
   }
 
-  function obAmountSize(el) {
-    var box = el.closest('.ob-amount');
-    if (!box) return;
-    el.parentNode.dataset.value = el.value || '0';
-    box.classList.toggle('long', el.value.length > 7);
+  function obPadKey(k) {
+    var box = document.getElementById('ob-amount');
+    if (!box || !state.onboarding) return;
+    var a = state.onboarding.a, f = box.dataset.f;
+    var s = obPadFresh ? '' : a[f] || '';
+    s = k === 'back' ? s.slice(0, -1) : padType(s, k);
+    if (s === null) return;
+    obPadFresh = false;
+    a[f] = s;
+    if (navigator.vibrate) navigator.vibrate(8);
+    box.innerHTML = padHtml(s);
+    box.classList.toggle('long', padShown(s).length > 7);
+    if (box.getAttribute('aria-invalid')) {
+      box.removeAttribute('aria-invalid');
+      document.getElementById('ob-error').hidden = true;
+    }
+    if (f === 'savings') {
+      var v = parseAmount(s || '0');
+      obEl.querySelectorAll('[data-ob="pct"]').forEach(function (c) { c.setAttribute('aria-pressed', String(v !== null && Math.abs(v - parseFloat(c.dataset.k)) < 0.005)); });
+    }
+    obPreview();
+    obDraft();
   }
 
   // Effort par mois d'un objectif choisi pendant le parcours.
@@ -3171,9 +3217,9 @@
     salary: function (a) {
       return {
         icon: 'wallet', title: 'Combien tu gagnes par mois&nbsp;?', sub: 'Ton salaire net, celui qui arrive sur ton compte. C\'est la base de tout le calcul.',
-        body: obAmount('Salaire net par mois, en euros', a.salary, 'salary') +
+        body: obAmount('Salaire net par mois', a.salary, 'salary') +
           '<p class="caption ob-center">Une prime, un remboursement ? Tu les ajouteras à part avec « Revenu ».</p>',
-        preview: true, focus: '[data-ob-f="salary"]'
+        preview: true, pad: true
       };
     },
     bills: function () {
@@ -3207,8 +3253,8 @@
           var amt = Math.round(sal * p) / 100;
           return '<button type="button" class="chip" data-ob="pct" data-k="' + amt + '" aria-pressed="' + (v !== null && Math.abs(v - amt) < 0.005) + '">' + (p ? p + ' %' : 'Rien') + '</button>';
         }).join('') + '</div>' +
-          obAmount('Épargne par mois, en euros', a.savings, 'savings'),
-        preview: true
+          obAmount('Épargne par mois', a.savings, 'savings'),
+        preview: true, pad: true
       };
     },
     goal: function (a) {
@@ -3326,7 +3372,8 @@
     var just = ui.obJust;
     ui.obJust = null;
 
-    obEl.innerHTML = '<form class="ob-panel" novalidate data-step="' + o.step + '">' + top +
+    obPadFresh = true;
+    obEl.innerHTML = '<form class="ob-panel' + (v.pad ? ' ob-padded' : '') + '" novalidate data-step="' + o.step + '">' + top +
       '<div class="ob-screen' + (!same && obDir !== 'none' ? ' ob-' + obDir : '') + '">' +
       (v.art || '<span class="ob-badge" aria-hidden="true">' + icon(v.icon) + '</span>') +
       '<h1 class="ob-title" id="ob-title" tabindex="-1">' + v.title + '</h1>' +
@@ -3334,6 +3381,7 @@
       '<div class="ob-body">' + v.body + '</div></div>' +
       '<footer class="ob-foot">' + (v.preview ? '<p class="pill-info ob-preview" id="ob-preview" aria-live="polite"></p>' : '') +
       '<p class="alert ob-error" id="ob-error" role="alert" hidden></p>' +
+      (v.pad ? '<div class="qe-pad ob-pad">' + padKeys('data-ob="key"', 'data-ob="key" data-value="back"') + '</div>' : '') +
       '<button type="submit" class="btn btn-primary btn-block">' + (v.next || (o.back === 'recap' ? 'Enregistrer' : 'Continuer')) + '</button>' + (v.alt || '') +
       '</footer></form>';
 
@@ -3364,6 +3412,14 @@
   obEl.addEventListener('submit', function (e) {
     e.preventDefault();
     obNext();
+  });
+
+  // Clavier physique (ordinateur) sur les écrans de montant.
+  obEl.addEventListener('keydown', function (e) {
+    if (!document.getElementById('ob-amount') || e.metaKey || e.ctrlKey || e.altKey) return;
+    var key = /^[0-9]$/.test(e.key) ? e.key : e.key === ',' || e.key === '.' ? ',' : e.key === 'Backspace' ? 'back' : null;
+    if (key) { e.preventDefault(); return obPadKey(key); }
+    if (e.key === 'Enter' && !e.target.closest('button')) { e.preventDefault(); obNext(); }
   });
 
   obEl.addEventListener('click', function (e) {
@@ -3397,6 +3453,7 @@
         var amt = a[g][k].on && !a[g][k].amount && obEl.querySelector('[data-ob-f="amt"][data-k="' + k + '"]');
         if (amt) amt.focus();
         return;
+      case 'key': return obPadKey(el.dataset.value);
       case 'pct':
         a.savings = plain(parseFloat(k));
         return obChoice('[data-ob="pct"][data-k="' + k + '"]');
@@ -3443,13 +3500,6 @@
     if (f === 'name') {
       a.name = el.value.slice(0, 40);
       document.getElementById('ob-hello').textContent = 'Bonjour' + (a.name.trim() ? ' ' + a.name.trim() : '');
-    }
-    obAmountSize(el);
-    if (f === 'salary') a.salary = el.value.slice(0, 14);
-    if (f === 'savings') {
-      a.savings = el.value.slice(0, 14);
-      var v = parseAmount(a.savings);
-      obEl.querySelectorAll('[data-ob="pct"]').forEach(function (c) { c.setAttribute('aria-pressed', String(v !== null && Math.abs(v - parseFloat(c.dataset.k)) < 0.005)); });
     }
     if (f === 'amt' || f === 'day') a[el.dataset.g][el.dataset.k][f === 'amt' ? 'amount' : 'day'] = el.value.slice(0, f === 'amt' ? 14 : 2);
     if (f === 'goal-name') a.goals[el.dataset.k].name = el.value.slice(0, 40);

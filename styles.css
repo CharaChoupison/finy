@@ -999,7 +999,8 @@ body.ob-open .toast { z-index: 40; bottom: calc(var(--safe-bottom) + 110px); }
 .ob-card-title { font-size: 16px; line-height: 22px; font-weight: 600; color: var(--ink); }
 .ob-center { text-align: center; }
 
-.ob-foot { position: sticky; bottom: 0; z-index: 2; display: flex; flex-direction: column; gap: 10px; padding: 12px 0 calc(var(--safe-bottom) + 16px); background: var(--bg); }
+.ob-foot { position: sticky; bottom: 0; z-index: 2; display: flex; flex-direction: column; gap: 10px; padding: 12px 0 max(var(--safe-bottom), 16px); background: var(--bg); }
+.ob.kb .ob-foot { padding-bottom: 12px; }
 .ob-foot::before { content: ""; position: absolute; left: 0; right: 0; top: -24px; height: 24px; background: linear-gradient(to top, var(--bg), transparent); pointer-events: none; }
 .ob-preview { align-self: center; margin: 0; }
 .ob-error { text-align: center; }
@@ -1065,16 +1066,18 @@ body.ob-open .toast { z-index: 40; bottom: calc(var(--safe-bottom) + 110px); }
 .input[aria-invalid="true"] { outline: 2px solid var(--danger); outline-offset: 0; }
 
 /* Grand montant (salaire, épargne) */
-.ob-amount { display: flex; align-items: center; justify-content: center; min-height: 136px; cursor: text; font-size: 64px; line-height: 72px; font-weight: 700; letter-spacing: -0.03em; font-variant-numeric: tabular-nums; }
-.ob-amount.long { font-size: 48px; line-height: 56px; }
-/* Le texte invisible (::after) donne sa largeur au champ, pour que le montant reste centré. */
-.ob-amount-num { display: inline-grid; }
-.ob-amount-num::after, .ob-amount input { grid-area: 1 / 1; font: inherit; letter-spacing: inherit; }
-.ob-amount-num::after { content: attr(data-value); visibility: hidden; white-space: pre; }
-.ob-amount input { width: 0; min-width: 100%; padding: 0; border: 0; outline: none; background: none; color: var(--ink); caret-color: var(--accent); text-align: center; }
-.ob-amount input::placeholder { color: var(--muted); opacity: 1; }
-.ob-amount input[aria-invalid="true"] { color: var(--danger); }
-.ob-amount-cur { margin-left: 4px; color: var(--muted); }
+/* Écrans de montant : même saisie que « Nouvelle dépense ». L'écran tient sur la hauteur du téléphone,
+   le montant prend la place libre et le pavé reste au-dessus de « Continuer ». */
+.ob-panel.ob-padded { height: 100%; }
+.ob-padded .ob-screen { padding-bottom: 4px; }
+.ob-padded .ob-body { flex: 1 1 auto; }
+.ob-amount-wrap { min-height: 80px; }
+.ob-pad .qe-key { height: 56px; }
+#ob-amount { outline: none; }
+#ob-amount[aria-invalid="true"] .qe-num { color: var(--danger); }
+.qe-num.fresh { padding: 0 6px; border-radius: 12px; background: var(--accent-soft); }
+.qe-num.fresh + .qe-caret { visibility: hidden; }
+@media (max-height: 900px) { .ob-padded .ob-badge { display: none; } }
 .ob-chips { flex-wrap: wrap; overflow: visible; margin: 0; padding: 0; }
 .ob-chips .chip[aria-checked="true"] { background: var(--primary); color: var(--on-primary); }
 .ob-more { display: flex; flex-wrap: wrap; gap: 8px; }
