@@ -5,6 +5,8 @@
   // ---------- Constantes ----------
 
   var STORE_KEY = 'finy:v1';
+  // Affichée en bas des Réglages. À incrémenter avec CACHE dans sw.js à chaque mise à jour.
+  var APP_VERSION = 23;
   var SUB_CATEGORIES = ['Streaming', 'Logiciels', 'Téléphonie', 'Sport', 'Jeux', 'Transport', 'Maison', 'Autre'];
   var BILL_CATEGORIES = ['Logement', 'Énergie', 'Assurance', 'Crédit', 'Impôts', 'Santé', 'Autre'];
   var CAT_PALETTE = ['var(--chart-3)', 'var(--chart-4)', 'var(--ink)', 'var(--muted)'];
@@ -1578,6 +1580,7 @@
       '<button type="button" class="row" data-action="ob-again">' + icon('sliders') + '<span class="row-main">Refaire la configuration guidée</span>' + icon('right', 'chev') + '</button>' +
       '<button type="button" class="row" data-action="reload">' + icon('refresh') + '<span class="row-main">Recharger Finy</span>' + icon('right', 'chev') + '</button>' +
       '</div><p class="caption">Ton budget, ton profil et ton thème restent sur cet appareil. Exporte une sauvegarde pour les retrouver ailleurs.</p></section>';
+    html += '<p class="caption app-version">Finy · V0.' + APP_VERSION + '</p>';
     return html;
   }
 

@@ -156,6 +156,7 @@ svg { width: 24px; height: 24px; flex: none; fill: none; stroke: currentColor; s
 .heading { font-size: 20px; line-height: 26px; font-weight: 600; }
 .label { font-size: 14px; line-height: 20px; font-weight: 500; color: var(--muted); }
 .caption { font-size: 13px; line-height: 18px; color: var(--muted); }
+.app-version { text-align: center; padding: 8px 0 16px; }
 .muted { color: var(--muted); }
 .strong { font-weight: 600; }
 
