@@ -10,6 +10,61 @@
   var CAT_PALETTE = ['var(--chart-3)', 'var(--chart-4)', 'var(--ink)', 'var(--muted)'];
   var SUB_PALETTE = ['var(--accent)', 'var(--chart-3)', 'var(--chart-4)', 'var(--ink)'];
 
+  // Configuration guidée du premier lancement : étapes, besoins et choix proposés.
+  // Une étape liée à un besoin (OB_STEP_NEED) n'apparaît que si ce besoin a été choisi.
+  var OB_STEPS = ['welcome', 'name', 'needs', 'salary', 'bills', 'subs', 'envs', 'savings', 'goal', 'remind', 'prefs', 'recap', 'done'];
+  var OB_STEP_NEED = { subs: 'subs', envs: 'budget', savings: 'save', goal: 'save', remind: 'remind' };
+  var OB_OPTIONAL = { name: 1, bills: 1, subs: 1, envs: 1, savings: 1, goal: 1, remind: 1, prefs: 1 };
+  var OB_NEEDS = [
+    ['subs', 'card', 'Suivre mes abonnements', 'Netflix, forfait, salle de sport… et leurs dates'],
+    ['budget', 'receipt', 'Tenir un budget', 'Courses, essence, sorties : une enveloppe par poste'],
+    ['save', 'piggy', 'Mettre de l\'argent de côté', 'Une épargne chaque mois, un objectif à atteindre'],
+    ['remind', 'bell', 'Ne plus rater un prélèvement', 'Un rappel quelques jours avant']
+  ];
+  // [clé, nom, catégorie, jour habituel]
+  var OB_BILLS = [
+    ['loyer', 'Loyer', 'Logement', 5],
+    ['energie', 'Électricité et gaz', 'Énergie', 10],
+    ['assurance', 'Assurance habitation', 'Assurance', 8],
+    ['mutuelle', 'Mutuelle', 'Santé', 3],
+    ['credit', 'Crédit', 'Crédit', 5],
+    ['impots', 'Impôts', 'Impôts', 15]
+  ];
+  // [clé, nom, site, catégorie, prix indicatif par mois]
+  var OB_SUBS = [
+    ['netflix', 'Netflix', 'netflix.com', 'Streaming', 14.99],
+    ['spotify', 'Spotify', 'spotify.com', 'Streaming', 11.12],
+    ['disney', 'Disney+', 'disneyplus.com', 'Streaming', 9.99],
+    ['prime', 'Amazon Prime', 'amazon.fr', 'Streaming', 6.99],
+    ['deezer', 'Deezer', 'deezer.com', 'Streaming', 11.99],
+    ['youtube', 'YouTube Premium', 'youtube.com', 'Streaming', 12.99],
+    ['canal', 'Canal+', 'canalplus.com', 'Streaming', 24.99],
+    ['icloud', 'iCloud+', 'icloud.com', 'Logiciels', 0.99],
+    ['chatgpt', 'ChatGPT', 'openai.com', 'Logiciels', 22.99],
+    ['mobile', 'Forfait mobile', '', 'Téléphonie', 15],
+    ['box', 'Box internet', '', 'Téléphonie', 30],
+    ['sport', 'Salle de sport', '', 'Sport', 29.99]
+  ];
+  // [clé, nom, budget proposé par mois]
+  var OB_ENVS = [
+    ['courses', 'Alimentation', 300],
+    ['essence', 'Essence', 100],
+    ['sorties', 'Sorties', 80],
+    ['shopping', 'Shopping', 60],
+    ['sante', 'Santé', 30],
+    ['animaux', 'Animaux', 40],
+    ['cadeaux', 'Cadeaux', 30]
+  ];
+  // [clé, nom, montant proposé (null : trois mois de salaire), durée en mois]
+  var OB_GOALS = [
+    ['coussin', 'Coussin de sécurité', null, 24],
+    ['voyage', 'Voyage', 1500, 12],
+    ['voiture', 'Voiture', 5000, 36],
+    ['permis', 'Permis', 1500, 12],
+    ['autre', '', 1000, 12]
+  ];
+  var OB_LIST = { bills: OB_BILLS, subs: OB_SUBS, envs: OB_ENVS };
+
   var ICON = {
     plus: 'M12 5v14M5 12h14',
     minus: 'M5 12h14',
@@ -31,7 +86,11 @@
     piggy: 'M12 3a9 9 0 1 0 0 18a9 9 0 0 0 0-18zM12 7v10M15 9.5c-.5-1-1.6-1.5-3-1.5c-1.7 0-3 .8-3 2s1.3 1.7 3 2s3 .8 3 2s-1.3 2-3 2c-1.4 0-2.5-.5-3-1.5',
     down: 'M6 9l6 6 6-6',
     backspace: 'M21 5H9l-6 7 6 7h12a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1zM12 9l6 6M18 9l-6 6',
-    sliders: 'M4 6h9M17 6h3M15 4v4M4 12h3M11 12h9M9 10v4M4 18h11M19 18h1M17 16v4'
+    sliders: 'M4 6h9M17 6h3M15 4v4M4 12h3M11 12h9M9 10v4M4 18h11M19 18h1M17 16v4',
+    check: 'M5 12.5l4.5 4.5L19 7.5',
+    lock: 'M6 11h12v9H6zM8.5 11V8a3.5 3.5 0 0 1 7 0v3',
+    sun: 'M12 8a4 4 0 1 0 0 8a4 4 0 0 0 0-8zM12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4',
+    target: 'M12 3a9 9 0 1 0 0 18a9 9 0 0 0 0-18zM12 7a5 5 0 1 0 0 10a5 5 0 0 0 0-10zM12 11a1 1 0 1 0 0 2a1 1 0 0 0 0-2z'
   };
 
   function icon(name, cls) {
@@ -54,7 +113,8 @@
       incomes: [],
       expenses: [],
       history: {},
-      meta: { since: null, lastExport: null, backupSnooze: null },
+      meta: { since: null, lastExport: null, backupSnooze: null, onboarded: null, firstSteps: null },
+      onboarding: null,
       settings: {
         theme: 'system',
         homeCount: 3,
@@ -132,7 +192,8 @@
       });
     }
     var meta = data.meta || {};
-    ['since', 'lastExport', 'backupSnooze'].forEach(function (k) { out.meta[k] = isIsoDate(meta[k]) ? meta[k] : null; });
+    ['since', 'lastExport', 'backupSnooze', 'onboarded', 'firstSteps'].forEach(function (k) { out.meta[k] = isIsoDate(meta[k]) ? meta[k] : null; });
+    out.onboarding = sanitizeOb(data.onboarding);
     var st = data.settings || {};
     out.settings.theme = ['system', 'light', 'dark'].indexOf(st.theme) >= 0 ? st.theme : 'system';
     out.settings.homeCount = st.homeCount === 5 ? 5 : 3;
@@ -160,8 +221,10 @@
     snapshot();
     try {
       localStorage.setItem(STORE_KEY, JSON.stringify(state));
+      return true;
     } catch (e) {
       toast("Impossible d'enregistrer sur cet appareil");
+      return false;
     }
   }
 
@@ -583,7 +646,7 @@
       action('add-exp', 'receipt', 'Dépense') + action('add-sub', 'plus', 'Abonnement') +
       action('add-income', 'trend', 'Revenu') + action('whatif', 'sliders', 'Et si…') + '</section>';
 
-    var colA = '', colB = '';
+    var colA = firstSteps(), colB = '';
     if (state.salary > 0) colA += homeSplit(t) + homeStats(t);
     colA += homeEnvelopes();
 
@@ -1489,6 +1552,7 @@
     html += '<section class="section" style="gap:12px"><h2 class="heading">Données</h2><div class="group">' +
       '<button type="button" class="row" data-action="export">' + icon('download') + '<span class="row-main">Exporter une sauvegarde</span>' + icon('right', 'chev') + '</button>' +
       '<label class="row" style="cursor:pointer">' + icon('upload') + '<span class="row-main">Importer une sauvegarde</span>' + icon('right', 'chev') + '<input type="file" accept="application/json,.json" class="sr-only" data-input="import"></label>' +
+      '<button type="button" class="row" data-action="ob-again">' + icon('sliders') + '<span class="row-main">Refaire la configuration guidée</span>' + icon('right', 'chev') + '</button>' +
       '<button type="button" class="row" data-action="reload">' + icon('refresh') + '<span class="row-main">Recharger Finy</span>' + icon('right', 'chev') + '</button>' +
       '</div><p class="caption">Ton budget, ton profil et ton thème restent sur cet appareil. Exporte une sauvegarde pour les retrouver ailleurs.</p></section>';
     return html;
@@ -1931,6 +1995,10 @@
       if (!data || typeof data !== 'object' || (!('salary' in data) && !('subs' in data))) return toast("Ce fichier n'est pas une sauvegarde Finy");
       if (!window.confirm('Remplacer tes données actuelles par cette sauvegarde ?')) return;
       state = merge(defaults(), data);
+      // Une sauvegarde importée (y compris depuis le premier écran) vaut configuration : pas de parcours guidé.
+      state.meta.onboarded = state.meta.onboarded || iso(today());
+      state.onboarding = null;
+      obClose();
       save(); applyTheme(); render();
       toast('Sauvegarde importée');
     };
@@ -2420,6 +2488,11 @@
       case 'edit-cat': return editCat(id);
       case 'edit-salary': return editSalary();
       case 'add-goal': return editGoal(null);
+      case 'first-steps-hide':
+        state.meta.firstSteps = null;
+        save();
+        return render();
+      case 'ob-again': return obOpen(true);
       case 'edit-goal': return editGoal(id);
       case 'delete-goal':
         if (!window.confirm('Supprimer cet objectif ?')) return;
@@ -2590,12 +2663,757 @@
     if (mq.addEventListener) mq.addEventListener('change', render);
   }
 
+  // ---------- Premier lancement : configuration guidée ----------
+
+  // Chaque étape est appliquée aux vraies données dès « Continuer » : si on s'arrête en route, l'app est déjà
+  // prête pour ce qui a été rempli. L'étape en cours, les réponses et les éléments créés (ids) sont gardés dans
+  // state.onboarding, retiré à la fin ; state.meta.onboarded marque le parcours comme terminé.
+
+  var obEl = document.getElementById('onboarding');
+  var obDir = 'none';
+  var obPct = 0;
+  var obDraftTimer = null;
+  var OB_SAVE_ERROR = 'Impossible d\'enregistrer sur cet appareil (stockage plein ou navigation privée). Tes réponses sont gardées : réessaie.';
+
+  // Nettoie la progression lue dans le stockage ou une sauvegarde : seules les clés connues sont gardées.
+  function sanitizeOb(o) {
+    if (!o || typeof o !== 'object' || !o.a || typeof o.a !== 'object') return null;
+    var str = function (v, n) { return typeof v === 'string' ? v.slice(0, n) : ''; };
+    var a = o.a;
+    var out = {
+      step: OB_STEPS.indexOf(o.step) >= 0 ? o.step : 'welcome',
+      back: o.back === 'recap' ? 'recap' : null,
+      skipped: {},
+      ids: {},
+      a: {
+        name: str(a.name, 40),
+        needs: Array.isArray(a.needs) ? OB_NEEDS.map(function (x) { return x[0]; }).filter(function (k) { return a.needs.indexOf(k) >= 0; }) : [],
+        salary: str(a.salary, 14),
+        savings: a.savings === null ? null : str(a.savings, 14),
+        bills: {}, subs: {}, envs: {},
+        goal: { key: '', name: '', target: '', months: 12 },
+        remind: { enabled: !!(a.remind && a.remind.enabled === true), days: 3 },
+        theme: ['system', 'light', 'dark'].indexOf(a.theme) >= 0 ? a.theme : 'system'
+      }
+    };
+    Object.keys(OB_OPTIONAL).forEach(function (k) { if (o.skipped && o.skipped[k] === true) out.skipped[k] = true; });
+    Object.keys(o.ids || {}).forEach(function (k) {
+      var v = o.ids[k];
+      if (/^(bill|sub|env):[a-z]+$|^goal$/.test(k) && v && typeof v.id === 'string') out.ids[k] = { id: v.id.slice(0, 40), own: v.own === true };
+    });
+    Object.keys(OB_LIST).forEach(function (g) {
+      OB_LIST[g].forEach(function (p) {
+        var x = a[g] && a[g][p[0]];
+        if (x && typeof x === 'object') out.a[g][p[0]] = { on: x.on === true, amount: str(x.amount, 14), day: str(String(x.day || ''), 2) };
+      });
+    });
+    var g = a.goal || {};
+    if (OB_GOALS.some(function (p) { return p[0] === g.key; })) {
+      out.a.goal = { key: g.key, name: str(g.name, 40), target: str(g.target, 14), months: [0, 6, 12, 24, 36].indexOf(g.months) >= 0 ? g.months : 12 };
+    }
+    var d = a.remind && a.remind.days;
+    if ([1, 2, 3, 5].indexOf(d) >= 0) out.a.remind.days = d;
+    return out;
+  }
+
+  // Prépare le parcours à partir de ce qui existe déjà : un élément du même nom est repris, jamais recréé.
+  function obStart() {
+    var s = state;
+    var o = {
+      step: 'welcome', back: null, skipped: {}, ids: {},
+      a: {
+        name: s.profile.name,
+        needs: [],
+        salary: s.salary > 0 ? plain(s.salary) : '',
+        savings: s.savings > 0 ? plain(s.savings) : null,
+        bills: {}, subs: {}, envs: {},
+        goal: { key: '', name: '', target: '', months: 12 },
+        remind: { enabled: s.settings.reminders.enabled, days: [1, 2, 3, 5].indexOf(s.settings.reminders.daysBefore) >= 0 ? s.settings.reminders.daysBefore : 3 },
+        theme: s.settings.theme
+      }
+    };
+    var adopt = function (group, list, prefix) {
+      OB_LIST[group].forEach(function (p) {
+        var found = list.filter(function (x) { return fold(x.name) === fold(p[1]); })[0];
+        if (!found) return;
+        o.ids[prefix + ':' + p[0]] = { id: found.id, own: false };
+        o.a[group][p[0]] = { on: true, amount: plain(found.amount), day: String(found.day || '') };
+      });
+    };
+    adopt('bills', ofKind('bill'), 'bill');
+    adopt('subs', ofKind('sub'), 'sub');
+    adopt('envs', s.categories, 'env');
+    if (!s.categories.length) o.a.envs.courses = { on: true, amount: '300', day: '' };
+    var n = o.a.needs;
+    if (ofKind('sub').length) n.push('subs');
+    if (s.categories.length) n.push('budget');
+    if (s.savings > 0 || s.goals.length) n.push('save');
+    if (s.settings.reminders.enabled) n.push('remind');
+    if (!n.length) o.a.needs = ['subs', 'budget'];
+    state.onboarding = o;
+  }
+
+  function obSteps() {
+    var n = state.onboarding.a.needs;
+    return OB_STEPS.filter(function (s) { return !OB_STEP_NEED[s] || n.indexOf(OB_STEP_NEED[s]) >= 0; });
+  }
+
+  function obOpen(again) {
+    if (again || !state.onboarding) obStart();
+    document.body.classList.add('ob-open');
+    obEl.hidden = false;
+    obDir = 'none';
+    obPct = 0;
+    obRender();
+  }
+
+  function obClose() {
+    obEl.hidden = true;
+    obEl.innerHTML = '';
+    document.body.classList.remove('ob-open');
+  }
+
+  // Garde les réponses en cours de saisie (sans les appliquer), pour les retrouver après une interruption.
+  function obDraft() {
+    clearTimeout(obDraftTimer);
+    obDraftTimer = setTimeout(function () {
+      try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch (e) { /* signalé au prochain « Continuer » */ }
+    }, 300);
+  }
+
+  function obDay(v) {
+    var n = parseInt(String(v || '').trim(), 10);
+    return /^\d{1,2}$/.test(String(v || '').trim()) && n >= 1 && n <= 31 ? n : null;
+  }
+
+  function obSalary() {
+    var n = parseAmount(state.onboarding.a.salary);
+    return n && n > 0 ? n : state.salary;
+  }
+
+  // Ce qui empêche de valider l'étape, avec le champ à corriger.
+  function obCheck(step) {
+    var a = state.onboarding.a;
+    var bad = function (msg, sel) { return { msg: msg, sel: sel }; };
+    if (step === 'salary') {
+      var n = parseAmount(a.salary);
+      if (n === null || n <= 0) return bad('Indique ton salaire net par mois, par exemple 1 800.', '[data-ob-f="salary"]');
+      if (n > 1000000) return bad('Ce montant paraît bien élevé : vérifie-le.', '[data-ob-f="salary"]');
+    }
+    if (OB_LIST[step]) {
+      var list = OB_LIST[step];
+      for (var i = 0; i < list.length; i++) {
+        var p = list[i], x = a[step][p[0]];
+        if (!x || !x.on) continue;
+        var sel = '[data-g="' + step + '"][data-k="' + p[0] + '"]';
+        var amt = parseAmount(x.amount);
+        if (amt === null || amt <= 0) return bad('Indique le montant pour « ' + p[1] + ' ».', '[data-ob-f="amt"]' + sel);
+        if (step !== 'envs' && !obDay(x.day)) return bad('Choisis un jour entre 1 et 31 pour « ' + p[1] + ' ».', '[data-ob-f="day"]' + sel);
+      }
+    }
+    if (step === 'savings' && (a.savings || '').trim()) {
+      var v = parseAmount(a.savings);
+      if (v === null) return bad('Indique un montant, par exemple 100.', '[data-ob-f="savings"]');
+      if (v > obSalary()) return bad('C\'est plus que ton salaire : choisis un montant plus petit.', '[data-ob-f="savings"]');
+    }
+    if (step === 'goal' && a.goal.key) {
+      var t = parseAmount(a.goal.target);
+      if (!a.goal.name.trim()) return bad('Donne un nom à ton objectif.', '[data-ob-f="goal-name"]');
+      if (t === null || t <= 0) return bad('Indique le montant à atteindre, par exemple 1 500.', '[data-ob-f="goal-target"]');
+    }
+    return null;
+  }
+
+  // Crée, met à jour ou retire un élément choisi pendant le parcours, sans jamais le dupliquer.
+  // Un élément déjà présent (même nom) est repris ; seul ce que le parcours a créé peut être retiré.
+  function obSync(key, on, listName, name, fill) {
+    var o = state.onboarding;
+    var link = o.ids[key];
+    var item = link && state[listName].filter(function (x) { return x.id === link.id; })[0];
+    if (!on) {
+      if (item && link.own) state[listName] = state[listName].filter(function (x) { return x !== item; });
+      delete o.ids[key];
+      return;
+    }
+    var isNew = false;
+    if (!item) {
+      item = state[listName].filter(function (x) { return fold(x.name) === fold(name); })[0];
+      if (item) o.ids[key] = { id: item.id, own: false };
+    }
+    if (!item) {
+      item = { id: uid() };
+      state[listName].push(item);
+      o.ids[key] = { id: item.id, own: true };
+      isNew = true;
+    }
+    fill(item, isNew);
+  }
+
+  // Applique une étape aux données. Les valeurs incomplètes sont ignorées (utile pour l'aperçu en direct).
+  function obApply(step) {
+    var a = state.onboarding.a;
+    switch (step) {
+      case 'name':
+        state.profile.name = a.name.trim().slice(0, 40);
+        break;
+      case 'salary':
+        var n = parseAmount(a.salary);
+        if (n > 0) state.salary = n;
+        break;
+      case 'bills':
+      case 'subs':
+        var bill = step === 'bills';
+        OB_LIST[step].forEach(function (p) {
+          var x = a[step][p[0]] || {};
+          var amt = parseAmount(x.amount || '');
+          var day = obDay(x.day);
+          obSync((bill ? 'bill:' : 'sub:') + p[0], x.on && amt > 0 && day, 'subs', p[1], function (s, isNew) {
+            if (isNew) {
+              s.name = p[1];
+              s.frequency = 'month';
+              s.month = today().getMonth();
+              s.category = bill ? p[2] : p[3];
+              s.site = bill ? '' : p[2];
+              s.image = null;
+              s.trialEnd = '';
+              s.paused = false;
+              s.kind = bill ? 'bill' : 'sub';
+            }
+            s.amount = amt;
+            s.day = day;
+          });
+        });
+        break;
+      case 'envs':
+        OB_ENVS.forEach(function (p) {
+          var x = a.envs[p[0]] || {};
+          var amt = parseAmount(x.amount || '');
+          obSync('env:' + p[0], x.on && amt > 0, 'categories', p[1], function (c, isNew) {
+            if (isNew) c.name = p[1];
+            c.amount = amt;
+          });
+        });
+        break;
+      case 'savings':
+        var v = (a.savings || '').trim() ? parseAmount(a.savings) : 0;
+        if (v !== null) state.savings = v;
+        break;
+      case 'goal':
+        var g = a.goal, target = parseAmount(g.target);
+        obSync('goal', !!g.key && !!g.name.trim() && target > 0, 'goals', g.name.trim(), function (x, isNew) {
+          if (isNew) { x.saved = 0; x.deposits = []; }
+          x.name = g.name.trim().slice(0, 40);
+          x.target = target;
+          x.open = g.months === 0;
+          x.months = g.months || 12;
+          x.monthly = 0;
+          x.start = monthKey(today());
+        });
+        break;
+      case 'remind':
+        state.settings.reminders.enabled = a.remind.enabled;
+        state.settings.reminders.daysBefore = a.remind.days;
+        break;
+      case 'prefs':
+        state.settings.theme = a.theme;
+        break;
+    }
+  }
+
+  // « Il te restera » avec les réponses de l'écran en cours, calculé sur une copie des données.
+  function obPreview() {
+    var out = document.getElementById('ob-preview');
+    if (!out) return;
+    var keep = state, free = null;
+    try {
+      state = JSON.parse(JSON.stringify(state));
+      obApply(state.onboarding.step);
+      free = state.salary > 0 ? totals().free : null;
+    } catch (e) { free = null; }
+    state = keep;
+    out.innerHTML = free === null ? '<span class="muted">Ton reste à vivre s\'affichera ici.</span>'
+      : '<span class="muted">Il te restera</span><span class="strong"' + (free < 0 ? ' style="color:var(--danger)"' : '') + '>' + euro(free) + '</span><span class="muted">ce mois-ci</span>';
+  }
+
+  function obNext() {
+    var o = state.onboarding;
+    if (o.step === 'done') return obFinish(obFirstAction().action);
+    var err = obCheck(o.step);
+    if (err) return obError(err);
+    obApply(o.step);
+    if (o.step === 'prefs') applyTheme();
+    delete o.skipped[o.step];
+    obAdvance();
+  }
+
+  function obSkip() {
+    var o = state.onboarding;
+    o.skipped[o.step] = true;
+    obAdvance();
+  }
+
+  function obAdvance() {
+    var o = state.onboarding, from = o.step;
+    var steps = obSteps();
+    var to = o.back === 'recap' ? 'recap' : steps[steps.indexOf(from) + 1] || 'done';
+    if (to === 'recap') o.back = null;
+    o.step = to;
+    if (!save()) { o.step = from; return obError({ msg: OB_SAVE_ERROR }); }
+    obDir = 'next';
+    obRender();
+  }
+
+  // Retour : ce qui est valide sur l'écran est gardé, le reste reste en brouillon.
+  function obBack() {
+    var o = state.onboarding, from = o.step;
+    if (!obCheck(from)) obApply(from);
+    var steps = obSteps();
+    var to = o.back === 'recap' ? 'recap' : steps[Math.max(0, steps.indexOf(from) - 1)];
+    if (to === 'recap') o.back = null;
+    o.step = to;
+    save();
+    obDir = 'prev';
+    obRender();
+  }
+
+  function obGoTo(step) {
+    var o = state.onboarding;
+    o.back = 'recap';
+    o.step = step;
+    obDraft();
+    obDir = 'next';
+    obRender();
+  }
+
+  function obError(err) {
+    var box = document.getElementById('ob-error');
+    if (!box) return toast(err.msg);
+    box.textContent = err.msg;
+    box.hidden = false;
+    obEl.querySelectorAll('[aria-invalid]').forEach(function (x) { x.removeAttribute('aria-invalid'); });
+    var field = err.sel && obEl.querySelector(err.sel);
+    if (field) {
+      field.setAttribute('aria-invalid', 'true');
+      field.setAttribute('aria-describedby', 'ob-error');
+      field.focus();
+    }
+    playEnter(box, 'ob-shake');
+    if (navigator.vibrate) navigator.vibrate([10, 40, 10]);
+  }
+
+  function obFirstAction() {
+    if (state.categories.length) return { action: 'exp', title: 'Note ta première dépense', text: 'Des courses, un plein : chaque dépense est retirée de son enveloppe et Finy te dit ce qu\'il reste.', cta: 'Ajouter une dépense' };
+    if (!ofKind('sub').length) return { action: 'sub', title: 'Ajoute un abonnement', text: 'Netflix, ton forfait, ta salle de sport : Finy les retire de ce qui reste et te prévient avant chaque prélèvement.', cta: 'Ajouter un abonnement' };
+    return { action: 'home', title: 'Découvre ton accueil', text: 'Ce qu\'il te reste, ta répartition et tes prochains prélèvements, en un coup d\'œil.', cta: 'Découvrir mon accueil' };
+  }
+
+  function obFinish(action) {
+    var o = state.onboarding;
+    state.meta.onboarded = iso(today());
+    state.meta.firstSteps = iso(today());
+    state.onboarding = null;
+    if (!save()) {
+      state.onboarding = o;
+      state.meta.onboarded = null;
+      return obError({ msg: OB_SAVE_ERROR });
+    }
+    obClose();
+    applyTheme();
+    if (currentRoute() !== '') location.hash = '#/';
+    else render();
+    checkReminders();
+    if (action === 'exp') editExpense(null);
+    else if (action === 'sub') editSub(null);
+  }
+
+  function obCheckIcon() { return '<span class="ob-check" aria-hidden="true">' + icon('check') + '</span>'; }
+
+  // Les choix d'une liste (charges, abonnements, enveloppes), puis le montant (et le jour) de chacun.
+  function obPicker(group, label) {
+    var a = state.onboarding.a[group];
+    var opts = OB_LIST[group].map(function (p) {
+      var on = !!(a[p[0]] && a[p[0]].on);
+      var hint = group === 'subs' ? '≈ ' + euro(p[4]) : group === 'envs' ? euro(p[2]) : '';
+      return '<button type="button" class="ob-opt" aria-pressed="' + on + '" data-ob="pick" data-g="' + group + '" data-k="' + p[0] + '">' +
+        (group === 'subs' ? subTile({ name: p[1], site: p[2] }, 'ob-tile') : '') +
+        '<span class="ob-opt-name">' + esc(p[1]) + '</span>' + (hint ? '<span class="ob-opt-hint">' + hint + '</span>' : '') + obCheckIcon() + '</button>';
+    }).join('');
+    var picked = OB_LIST[group].filter(function (p) { return a[p[0]] && a[p[0]].on; });
+    var rows = picked.map(function (p) {
+      var x = a[p[0]], at = ' data-g="' + group + '" data-k="' + p[0] + '"';
+      return '<div class="ob-item"><span class="ob-item-name">' + esc(p[1]) + '</span>' +
+        '<label class="ob-item-amt"><span class="sr-only">Montant pour ' + esc(p[1]) + ' en euros</span><input class="input" type="text" inputmode="decimal" autocomplete="off" placeholder="0,00" value="' + esc(x.amount) + '" data-ob-f="amt"' + at + '><span aria-hidden="true">€</span></label>' +
+        (group === 'envs' ? '' : '<label class="ob-item-day"><span aria-hidden="true">le</span><input class="input" type="text" inputmode="numeric" maxlength="2" autocomplete="off" placeholder="1" value="' + esc(x.day) + '" data-ob-f="day"' + at + ' aria-label="Jour du prélèvement pour ' + esc(p[1]) + '"></label>') + '</div>';
+    }).join('');
+    return '<div class="ob-grid' + (group === 'subs' ? ' ob-grid-logos' : '') + '" role="group" aria-label="' + label + '">' + opts + '</div>' +
+      (rows ? '<div class="ob-items"><p class="label">' + (group === 'envs' ? 'Budget par mois' : 'Montant par mois et jour du prélèvement') + '</p>' + rows + '</div>' : '');
+  }
+
+  // Résumé d'une liste : « Loyer, Mutuelle · 685,00 € par mois ».
+  function obSum(items, none) {
+    if (!items.length) return none;
+    var names = items.map(function (x) { return x.name; });
+    var total = items.reduce(function (s, x) { return s + (x.frequency === 'year' ? x.amount / 12 : x.amount); }, 0);
+    return esc(names.slice(0, 3).join(', ') + (names.length > 3 ? ' et ' + (names.length - 3) + ' autre' + (names.length > 4 ? 's' : '') : '')) + ' · ' + euro(total) + ' par mois';
+  }
+
+  var OB_VIEWS = {
+    welcome: function () {
+      var li = function (ic, t, d) { return '<li><span class="ob-point-ic">' + icon(ic) + '</span><span><span class="ob-card-title">' + t + '</span><span class="caption">' + d + '</span></span></li>'; };
+      return {
+        art: '<div class="ob-hello" aria-hidden="true"><i></i><i></i><i></i></div>',
+        title: 'Bienvenue sur Finy',
+        sub: 'En deux minutes, on prépare ton espace ensemble. Ensuite, Finy te dit chaque jour combien il te reste.',
+        body: '<ul class="ob-points">' + li('wallet', 'Ton salaire et tes dépenses fixes', 'Pour calculer ce qui reste vraiment') +
+          li('sliders', 'Ce que tu veux suivre', 'Abonnements, budget, épargne') + li('bell', 'Tes préférences', 'Rappels et apparence') + '</ul>' +
+          '<p class="caption ob-privacy">' + icon('lock') + 'Tout reste sur ton appareil : pas de compte, pas de serveur.</p>',
+        next: 'C\'est parti',
+        // Relancé depuis Réglages : on peut revenir à l'app sans rien changer.
+        alt: state.meta.onboarded ? '<button type="button" class="btn ob-alt" data-ob="quit">Revenir à l\'app</button>'
+          : '<label class="btn ob-alt">J\'ai déjà une sauvegarde Finy<input type="file" accept="application/json,.json" class="sr-only" data-input="import"></label>'
+      };
+    },
+    name: function (a) {
+      return {
+        icon: 'user', title: 'Comment tu t\'appelles&nbsp;?', sub: 'Juste pour te dire bonjour.',
+        body: '<label class="sr-only" for="ob-name">Ton prénom</label><input class="input ob-input" id="ob-name" type="text" maxlength="40" autocomplete="given-name" autocapitalize="words" placeholder="Ton prénom" value="' + esc(a.name) + '" data-ob-f="name">' +
+          '<div class="ob-mock" aria-hidden="true"><span class="ob-mock-tag">Aperçu de ton accueil</span><span class="label">' + cap(longDay.format(today())) + '</span><span class="ob-mock-title" id="ob-hello">Bonjour' + (a.name.trim() ? ' ' + esc(a.name.trim()) : '') + '</span></div>',
+        focus: '#ob-name'
+      };
+    },
+    needs: function (a) {
+      var n = a.name.trim();
+      return {
+        icon: 'sliders', title: (n ? esc(n) + ', qu\'' : 'Qu\'') + 'est-ce qui t\'amène&nbsp;?',
+        sub: 'Choisis tout ce qui te parle, on adapte la suite. Savoir ce qu\'il te reste est toujours compris.',
+        body: '<div class="ob-cards" role="group" aria-label="Ce que tu veux faire avec Finy">' + OB_NEEDS.map(function (x) {
+          return '<button type="button" class="ob-card" role="checkbox" aria-checked="' + (a.needs.indexOf(x[0]) >= 0) + '" data-ob="need" data-k="' + x[0] + '">' +
+            '<span class="ob-card-ic">' + icon(x[1]) + '</span><span class="ob-card-txt"><span class="ob-card-title">' + x[2] + '</span><span class="caption">' + x[3] + '</span></span>' + obCheckIcon() + '</button>';
+        }).join('') + '</div>'
+      };
+    },
+    salary: function (a) {
+      return {
+        icon: 'wallet', title: 'Combien tu gagnes par mois&nbsp;?', sub: 'Ton salaire net, celui qui arrive sur ton compte. C\'est la base de tout le calcul.',
+        body: '<label class="ob-amount"><span class="sr-only">Salaire net par mois, en euros</span><input type="text" inputmode="decimal" autocomplete="off" placeholder="0" value="' + esc(a.salary) + '" data-ob-f="salary"><span aria-hidden="true">€</span></label>' +
+          '<p class="caption ob-center">Une prime, un remboursement ? Tu les ajouteras à part avec « Revenu ».</p>',
+        preview: true, focus: '[data-ob-f="salary"]'
+      };
+    },
+    bills: function () {
+      return {
+        icon: 'calendar', title: 'Tes dépenses fixes', sub: 'Ce qui part chaque mois quoi qu\'il arrive. Touche celles que tu as, puis indique leur montant.',
+        body: obPicker('bills', 'Dépenses fixes') + '<p class="caption">D\'autres charges ? Tu pourras les ajouter dans Abonnements › Charges fixes.</p>',
+        preview: true
+      };
+    },
+    subs: function () {
+      return {
+        icon: 'card', title: 'Tes abonnements', sub: 'Touche ceux que tu paies. Les prix sont indicatifs : ajuste-les si besoin.',
+        body: obPicker('subs', 'Abonnements') + '<p class="caption">Il en manque ? Ajoute-les ensuite, ou importe un relevé bancaire dans Abonnements pour les retrouver.</p>',
+        preview: true
+      };
+    },
+    envs: function () {
+      return {
+        icon: 'receipt', title: 'Ton budget du quotidien', sub: 'Une enveloppe réserve une somme pour chaque poste. Finy suit ce que tu dépenses dedans.',
+        body: obPicker('envs', 'Enveloppes'),
+        preview: true
+      };
+    },
+    savings: function (a) {
+      var sal = obSalary();
+      if (a.savings === null) a.savings = plain(Math.round(sal * 0.1));
+      var v = parseAmount(a.savings || '0');
+      return {
+        icon: 'piggy', title: 'Combien mettre de côté chaque mois&nbsp;?', sub: 'Mis de côté dès le début du mois. Ce qui reste, tu le dépenses l\'esprit léger.',
+        body: '<div class="chips ob-chips" role="group" aria-label="Part de ton salaire">' + [0, 5, 10, 15, 20].map(function (p) {
+          var amt = Math.round(sal * p) / 100;
+          return '<button type="button" class="chip" data-ob="pct" data-k="' + amt + '" aria-pressed="' + (v !== null && Math.abs(v - amt) < 0.005) + '">' + (p ? p + ' %' : 'Rien') + '</button>';
+        }).join('') + '</div>' +
+          '<label class="ob-amount"><span class="sr-only">Épargne par mois, en euros</span><input type="text" inputmode="decimal" autocomplete="off" placeholder="0" value="' + esc(a.savings) + '" data-ob-f="savings"><span aria-hidden="true">€</span></label>',
+        preview: true
+      };
+    },
+    goal: function (a) {
+      var g = a.goal;
+      var cards = OB_GOALS.map(function (p) {
+        return '<button type="button" class="ob-opt" role="radio" aria-checked="' + (g.key === p[0]) + '" data-ob="goal" data-k="' + p[0] + '"><span class="ob-opt-name">' + (p[1] || 'Autre projet') + '</span>' + obCheckIcon() + '</button>';
+      }).join('');
+      var form = '';
+      if (g.key) {
+        var t = parseAmount(g.target);
+        form = '<div class="ob-items"><label class="field"><span>Nom</span><input class="input" type="text" maxlength="40" autocomplete="off" placeholder="Mon projet" value="' + esc(g.name) + '" data-ob-f="goal-name"></label>' +
+          '<label class="field"><span>Montant à atteindre (€)</span><input class="input" type="text" inputmode="decimal" autocomplete="off" placeholder="0,00" value="' + esc(g.target) + '" data-ob-f="goal-target"></label>' +
+          '<div class="field"><span>En combien de temps&nbsp;?</span><div class="chips ob-chips" role="radiogroup" aria-label="Durée">' + [[6, '6 mois'], [12, '1 an'], [24, '2 ans'], [36, '3 ans'], [0, 'Sans échéance']].map(function (d) {
+            return '<button type="button" class="chip" role="radio" aria-checked="' + (g.months === d[0]) + '" data-ob="months" data-k="' + d[0] + '">' + d[1] + '</button>';
+          }).join('') + '</div></div>' +
+          '<p class="pill-info" id="ob-goal-line">' + (g.months === 0 ? '<span class="strong">Tu verses quand tu veux</span><span class="muted">rien n\'est réservé chaque mois</span>'
+            : t > 0 ? '<span class="strong">' + euro(Math.ceil(t / g.months * 100) / 100) + ' par mois</span><span class="muted">pendant ' + durationLabel(g.months) + '</span>' : '<span class="muted">Indique un montant pour voir l\'effort par mois.</span>') + '</p></div>';
+      }
+      return {
+        icon: 'target', title: 'Un objectif en tête&nbsp;?', sub: 'Un voyage, un coussin de sécurité… Finy calcule combien mettre de côté chaque mois.',
+        body: '<div class="ob-grid" role="radiogroup" aria-label="Objectif">' + cards + '</div>' + form,
+        preview: !!g.key, next: g.key ? null : 'Pas d\'objectif pour l\'instant'
+      };
+    },
+    remind: function (a) {
+      var can = 'Notification' in window;
+      var r = a.remind;
+      var u = upcoming()[0];
+      var sample = u ? { name: u.sub.name, amount: u.sub.amount } : { name: 'Netflix', amount: 14.99 };
+      var when = new Date(today().getFullYear(), today().getMonth(), today().getDate() + r.days);
+      return {
+        icon: 'bell', title: 'On te prévient avant chaque prélèvement&nbsp;?', sub: 'Une notification quelques jours avant, pour ne jamais être pris de court.',
+        body: '<div class="ob-toggle"><span class="ob-card-txt"><span class="ob-card-title">Activer les rappels</span><span class="caption">' +
+          (can ? 'Ton appareil va te demander l\'autorisation.' : 'Sur iPhone, ajoute d\'abord Finy à l\'écran d\'accueil (Partager › Sur l\'écran d\'accueil), puis active-les dans Réglages.') + '</span></span>' +
+          '<button type="button" class="switch" role="switch" aria-checked="' + r.enabled + '" aria-label="Activer les rappels" data-ob="remind"' + (can ? '' : ' disabled') + '></button></div>' +
+          (r.enabled ? '<div class="field"><span>Combien de jours avant&nbsp;?</span><div class="chips ob-chips" role="radiogroup" aria-label="Jours avant le prélèvement">' + [1, 2, 3, 5].map(function (d) {
+            return '<button type="button" class="chip" role="radio" aria-checked="' + (r.days === d) + '" data-ob="days" data-k="' + d + '">' + d + (d > 1 ? ' jours' : ' jour') + '</button>';
+          }).join('') + '</div></div>' : '') +
+          '<div class="ob-notif' + (r.enabled ? '' : ' off') + '" aria-hidden="true"><span class="ob-notif-ic">' + LOGO + '</span><span class="ob-notif-txt"><span class="ob-notif-app">Finy · maintenant</span>' +
+          '<span class="strong">' + esc(sample.name) + (r.days === 1 ? ' demain' : ' dans ' + r.days + ' jours') + '</span><span class="caption">' + euro(sample.amount) + ' seront prélevés le ' + shortDate.format(when).replace(/\.$/, '') + '.</span></span></div>',
+        next: r.enabled ? null : 'Continuer sans rappels'
+      };
+    },
+    prefs: function (a) {
+      return {
+        icon: 'sun', title: 'Clair ou sombre&nbsp;?', sub: 'Tu pourras changer d\'avis à tout moment dans Réglages.',
+        body: '<div class="ob-themes" role="radiogroup" aria-label="Apparence">' + [['system', 'Système'], ['light', 'Clair'], ['dark', 'Sombre']].map(function (t) {
+          return '<button type="button" class="ob-theme" role="radio" aria-checked="' + (a.theme === t[0]) + '" data-ob="theme" data-k="' + t[0] + '">' +
+            '<span class="ob-theme-art ob-theme-' + t[0] + '" aria-hidden="true"><i></i><i></i><i></i></span><span class="ob-opt-name">' + t[1] + '</span>' + obCheckIcon() + '</button>';
+        }).join('') + '</div>'
+      };
+    },
+    recap: function (a) {
+      var t = totals();
+      var has = function (need) { return a.needs.indexOf(need) >= 0; };
+      var rows = [
+        ['name', 'Prénom', state.profile.name ? esc(state.profile.name) : 'Pas renseigné', 'var(--muted)'],
+        ['salary', 'Salaire net', euro(state.salary) + ' par mois', 'var(--ink)'],
+        ['bills', 'Charges fixes', obSum(ofKind('bill'), 'Aucune pour l\'instant'), 'var(--chart-5)']
+      ];
+      if (has('subs')) rows.push(['subs', 'Abonnements', obSum(ofKind('sub'), 'Aucun pour l\'instant'), 'var(--chart-2)']);
+      if (has('budget')) rows.push(['envs', 'Enveloppes', obSum(state.categories, 'Aucune pour l\'instant'), 'var(--chart-3)']);
+      if (has('save')) {
+        rows.push(['savings', 'Épargne', state.savings > 0 ? euro(state.savings) + ' par mois' : 'Rien pour l\'instant', 'var(--accent)']);
+        rows.push(['goal', 'Objectifs', state.goals.length ? state.goals.map(function (g) { return esc(g.name) + ' · ' + euro(g.target) + (g.open ? ' sans échéance' : ' en ' + durationLabel(g.months)); }).join(', ') : 'Aucun pour l\'instant', 'var(--chart-4)']);
+      }
+      if (has('remind')) rows.push(['remind', 'Rappels', state.settings.reminders.enabled ? state.settings.reminders.daysBefore + (state.settings.reminders.daysBefore > 1 ? ' jours' : ' jour') + ' avant chaque prélèvement' : 'Désactivés', 'var(--warning)']);
+      rows.push(['prefs', 'Apparence', { system: 'Système (comme ton appareil)', light: 'Clair', dark: 'Sombre' }[state.settings.theme], 'var(--muted)']);
+      var more = OB_NEEDS.filter(function (x) { return !has(x[0]); });
+      return {
+        icon: 'check', title: 'Voici ton espace', sub: 'Touche une ligne pour la modifier.',
+        body: '<div class="ob-recap-hero"><span class="label">Il te reste ce mois-ci</span>' + hero(t.free) + '</div>' +
+          '<div class="group ob-recap">' + rows.map(function (r) {
+            return '<button type="button" class="row" data-ob="edit" data-k="' + r[0] + '"><span class="dot" style="--c:' + r[3] + '" aria-hidden="true"></span>' +
+              '<span class="row-main"><span class="row-title">' + r[1] + '</span><span class="row-meta"><span>' + r[2] + '</span></span></span>' +
+              '<span class="sr-only">Modifier</span>' + icon('right', 'chev') + '</button>';
+          }).join('') + '</div>' +
+          (more.length ? '<div class="field"><span>Tu veux aussi…</span><div class="ob-more">' + more.map(function (x) {
+            return '<button type="button" class="chip" data-ob="addneed" data-k="' + x[0] + '">' + icon('plus') + x[2] + '</button>';
+          }).join('') + '</div></div>' : ''),
+        next: 'C\'est tout bon'
+      };
+    },
+    done: function (a) {
+      var n = a.name.trim();
+      var fa = obFirstAction();
+      return {
+        art: '<div class="ob-done-art" aria-hidden="true"><span class="ob-ring"></span>' + icon('check') + '</div>',
+        title: 'C\'est prêt' + (n ? ', ' + esc(n) : '') + '&nbsp;!', sub: 'Ton espace est configuré. Voici ce qu\'il te reste ce mois-ci :',
+        body: '<div class="ob-done-amount">' + hero(totals().free, 'ob-free') + '</div>' +
+          '<div class="ob-first"><span class="label">Pour commencer</span><span class="ob-card-title">' + fa.title + '</span><span class="caption">' + fa.text + '</span></div>',
+        next: fa.cta,
+        alt: fa.action === 'home' ? '' : '<button type="button" class="btn ob-alt" data-ob="finish" data-k="home">Découvrir mon accueil</button>'
+      };
+    }
+  };
+
+  // Dessine l'étape en cours. `same` : même étape redessinée après un choix (sans transition, focus gardé).
+  function obRender(same) {
+    var o = state.onboarding;
+    var steps = obSteps();
+    if (steps.indexOf(o.step) < 0) o.step = 'needs';
+    var v = OB_VIEWS[o.step](o.a);
+    var core = steps.filter(function (s) { return s !== 'welcome' && s !== 'done'; });
+    var i = core.indexOf(o.step);
+    var pct = o.step === 'welcome' ? 0 : o.step === 'done' ? 100 : Math.round((i + 1) / (core.length + 1) * 100);
+    var bare = o.step === 'welcome';
+    var top = '<header class="ob-top">' +
+      (bare ? '<span class="ob-top-space"></span>' : '<button type="button" class="icon-btn" data-ob="back" aria-label="' + (o.back === 'recap' ? 'Revenir au récapitulatif' : 'Revenir à l\'étape précédente') + '">' + icon('left') + '</button>') +
+      (bare ? '<span></span>' : o.step === 'done' ? '<span class="ob-top-logo" aria-hidden="true">' + LOGO + 'finy</span>'
+        : '<div class="ob-progress" role="progressbar" aria-label="Progression" aria-valuemin="1" aria-valuemax="' + core.length + '" aria-valuenow="' + (i + 1) + '" aria-valuetext="Étape ' + (i + 1) + ' sur ' + core.length + '"><span style="width:' + (same ? pct : obPct) + '%"></span></div>') +
+      (OB_OPTIONAL[o.step] && o.back !== 'recap' ? '<button type="button" class="ob-skip" data-ob="skip">Passer</button>' : '<span class="ob-top-space"></span>') + '</header>';
+    var scroll = same ? obEl.scrollTop : 0;
+    var active = same && document.activeElement && obEl.contains(document.activeElement) ? document.activeElement : null;
+    var activeSel = active && active.dataset.ob ? '[data-ob="' + active.dataset.ob + '"]' + (active.dataset.k ? '[data-k="' + active.dataset.k + '"]' : '') : null;
+    var just = ui.obJust;
+    ui.obJust = null;
+
+    obEl.innerHTML = '<form class="ob-panel" novalidate data-step="' + o.step + '">' + top +
+      '<div class="ob-screen' + (!same && obDir !== 'none' ? ' ob-' + obDir : '') + '">' +
+      (v.art || '<span class="ob-badge" aria-hidden="true">' + icon(v.icon) + '</span>') +
+      '<h1 class="ob-title" id="ob-title" tabindex="-1">' + v.title + '</h1>' +
+      (v.sub ? '<p class="ob-sub">' + v.sub + '</p>' : '') +
+      '<div class="ob-body">' + v.body + '</div></div>' +
+      '<footer class="ob-foot">' + (v.preview ? '<p class="pill-info ob-preview" id="ob-preview" aria-live="polite"></p>' : '') +
+      '<p class="alert ob-error" id="ob-error" role="alert" hidden></p>' +
+      '<button type="submit" class="btn btn-primary btn-block">' + (v.next || (o.back === 'recap' ? 'Enregistrer' : 'Continuer')) + '</button>' + (v.alt || '') +
+      '</footer></form>';
+
+    var bar = obEl.querySelector('.ob-progress span');
+    if (bar && !same) requestAnimationFrame(function () { requestAnimationFrame(function () { bar.style.width = pct + '%'; }); });
+    obPct = pct;
+    if (just) { var j = obEl.querySelector(just); if (j) j.classList.add('ob-just'); }
+    if (v.preview) obPreview();
+    runCounters(obEl);
+    if (same) {
+      obEl.scrollTop = scroll;
+      var back = activeSel && obEl.querySelector(activeSel);
+      if (back) back.focus({ preventScroll: true });
+    } else {
+      obEl.scrollTop = 0;
+      var f = v.focus && window.matchMedia && window.matchMedia('(hover: hover)').matches ? obEl.querySelector(v.focus) : null;
+      (f || document.getElementById('ob-title')).focus({ preventScroll: true });
+    }
+  }
+
+  function obChoice(sel) {
+    ui.obJust = sel;
+    if (navigator.vibrate) navigator.vibrate(8);
+    obDraft();
+    obRender(true);
+  }
+
+  obEl.addEventListener('submit', function (e) {
+    e.preventDefault();
+    obNext();
+  });
+
+  obEl.addEventListener('click', function (e) {
+    var el = e.target.closest('[data-ob]');
+    if (!el || !state.onboarding) return;
+    var a = state.onboarding.a, k = el.dataset.k;
+    switch (el.dataset.ob) {
+      case 'back': return obBack();
+      case 'skip': return obSkip();
+      case 'edit': return obGoTo(k);
+      case 'finish': return obFinish(k);
+      case 'quit':
+        state.onboarding = null;
+        save();
+        obClose();
+        return render();
+      case 'need':
+        a.needs = a.needs.indexOf(k) >= 0 ? a.needs.filter(function (x) { return x !== k; }) : a.needs.concat(k);
+        a.needs = OB_NEEDS.map(function (x) { return x[0]; }).filter(function (x) { return a.needs.indexOf(x) >= 0; });
+        return obChoice('[data-ob="need"][data-k="' + k + '"]');
+      case 'addneed':
+        if (a.needs.indexOf(k) < 0) a.needs.push(k);
+        return obGoTo({ subs: 'subs', budget: 'envs', save: 'savings', remind: 'remind' }[k]);
+      case 'pick':
+        var g = el.dataset.g, p = OB_LIST[g].filter(function (x) { return x[0] === k; })[0];
+        var x = a[g][k];
+        if (x) x.on = !x.on;
+        else a[g][k] = { on: true, amount: g === 'subs' ? plain(p[4]) : g === 'envs' ? plain(p[2]) : '', day: g === 'bills' ? String(p[3]) : g === 'subs' ? '1' : '' };
+        obChoice('[data-ob="pick"][data-k="' + k + '"]');
+        // Une charge sans montant : on va directement au champ.
+        var amt = a[g][k].on && !a[g][k].amount && obEl.querySelector('[data-ob-f="amt"][data-k="' + k + '"]');
+        if (amt) amt.focus();
+        return;
+      case 'pct':
+        a.savings = plain(parseFloat(k));
+        return obChoice('[data-ob="pct"][data-k="' + k + '"]');
+      case 'goal':
+        if (a.goal.key === k) { a.goal.key = ''; return obChoice(null); }
+        var preset = OB_GOALS.filter(function (x) { return x[0] === k; })[0];
+        var target = preset[2] === null ? Math.max(500, Math.round(obSalary() * 3 / 100) * 100) : preset[2];
+        a.goal = { key: k, name: preset[1], target: plain(target), months: preset[3] };
+        obChoice('[data-ob="goal"][data-k="' + k + '"]');
+        if (!preset[1]) { var nm = obEl.querySelector('[data-ob-f="goal-name"]'); if (nm) nm.focus(); }
+        return;
+      case 'months':
+        a.goal.months = parseInt(k, 10);
+        return obChoice('[data-ob="months"][data-k="' + k + '"]');
+      case 'days':
+        a.remind.days = parseInt(k, 10);
+        return obChoice('[data-ob="days"][data-k="' + k + '"]');
+      case 'theme':
+        a.theme = k;
+        state.settings.theme = k;
+        applyTheme();
+        return obChoice('[data-ob="theme"][data-k="' + k + '"]');
+      case 'remind':
+        if (a.remind.enabled) { a.remind.enabled = false; return flipSwitch(el, function () { obChoice(null); }); }
+        if (!('Notification' in window)) return;
+        Notification.requestPermission().then(function (perm) {
+          if (perm !== 'granted') return obError({ msg: 'Les notifications sont bloquées. Tu pourras les autoriser plus tard dans les réglages de ton appareil, puis dans Réglages › Rappels.' });
+          a.remind.enabled = true;
+          flipSwitch(el, function () { obChoice(null); });
+        });
+        return;
+    }
+  });
+
+  obEl.addEventListener('input', function (e) {
+    var el = e.target, f = el.dataset.obF;
+    if (!f || !state.onboarding) return;
+    var a = state.onboarding.a;
+    if (f === 'name') {
+      a.name = el.value.slice(0, 40);
+      document.getElementById('ob-hello').textContent = 'Bonjour' + (a.name.trim() ? ' ' + a.name.trim() : '');
+    }
+    if (f === 'salary') a.salary = el.value.slice(0, 14);
+    if (f === 'savings') {
+      a.savings = el.value.slice(0, 14);
+      var v = parseAmount(a.savings);
+      obEl.querySelectorAll('[data-ob="pct"]').forEach(function (c) { c.setAttribute('aria-pressed', String(v !== null && Math.abs(v - parseFloat(c.dataset.k)) < 0.005)); });
+    }
+    if (f === 'amt' || f === 'day') a[el.dataset.g][el.dataset.k][f === 'amt' ? 'amount' : 'day'] = el.value.slice(0, f === 'amt' ? 14 : 2);
+    if (f === 'goal-name') a.goal.name = el.value.slice(0, 40);
+    if (f === 'goal-target') {
+      a.goal.target = el.value.slice(0, 14);
+      var t = parseAmount(a.goal.target), line = document.getElementById('ob-goal-line');
+      if (line && a.goal.months) line.innerHTML = t > 0 ? '<span class="strong">' + euro(Math.ceil(t / a.goal.months * 100) / 100) + ' par mois</span><span class="muted">pendant ' + durationLabel(a.goal.months) + '</span>' : '<span class="muted">Indique un montant pour voir l\'effort par mois.</span>';
+    }
+    if (el.getAttribute('aria-invalid')) {
+      el.removeAttribute('aria-invalid');
+      document.getElementById('ob-error').hidden = true;
+    }
+    obPreview();
+    obDraft();
+  });
+
+  // Premiers pas, sur l'accueil après le parcours : se cochent d'eux-mêmes, et se masquent.
+  function firstSteps() {
+    if (!state.meta.firstSteps) return '';
+    var items = [];
+    if (state.categories.length) items.push([state.expenses.length > 0, 'Noter une première dépense', 'add-exp']);
+    items.push([ofKind('sub').length > 0, 'Ajouter un abonnement', 'add-sub']);
+    if (!state.goals.length) items.push([false, 'Te fixer un objectif d\'épargne', 'add-goal']);
+    items.push([!!state.meta.lastExport, 'Exporter une sauvegarde', 'export']);
+    var done = items.filter(function (x) { return x[0]; }).length;
+    if (done === items.length) return '';
+    return '<section class="section first-steps"><div class="section-head"><h2 class="heading">Premiers pas</h2>' +
+      '<button type="button" class="link-btn" style="color:var(--muted)" data-action="first-steps-hide">Masquer</button></div>' +
+      '<div class="group">' + items.map(function (x) {
+        return x[0] ? '<div class="row"><span class="fs-check done" aria-hidden="true">' + icon('check') + '</span><span class="row-main"><span class="row-title fs-done">' + x[1] + '</span></span><span class="sr-only">Fait</span></div>'
+          : '<button type="button" class="row" data-action="' + x[2] + '"><span class="fs-check" aria-hidden="true"></span><span class="row-main"><span class="row-title">' + x[1] + '</span></span>' + icon('right', 'chev') + '</button>';
+      }).join('') + '</div><p class="caption">' + done + ' sur ' + items.length + ' · Tes réglages restent modifiables dans Réglages.</p></section>';
+  }
+
   // ---------- Démarrage ----------
 
   applyTheme();
+  // Données d'avant la configuration guidée : le parcours est considéré comme fait.
+  if (!state.meta.onboarded && !state.onboarding && (state.salary > 0 || state.subs.length || state.categories.length || state.goals.length)) {
+    state.meta.onboarded = state.meta.since || iso(today());
+  }
   // Enregistre la photo du mois dans l'historique dès l'ouverture.
   if (state.salary > 0) save();
   render();
+  if (!state.meta.onboarded) obOpen(false);
   checkReminders();
 
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {
