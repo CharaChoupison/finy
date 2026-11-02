@@ -527,6 +527,32 @@ button.row:active, a.row:active { transform: scale(.985); }
 .sheet[open]::backdrop { animation: fade .25s ease-out; }
 .chip[aria-pressed="true"] { transition: background-color .2s ease, color .2s ease; }
 
+/* Démarrage : logo et barre de chargement, sur fond noir comme l'écran système */
+.splash {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: var(--safe-top) 0 var(--safe-bottom);
+  background: #000000;
+  color: #FFFFFF;
+  transition: opacity .3s ease-out;
+}
+.splash.out { opacity: 0; pointer-events: none; }
+.splash-logo { width: 84px; height: 84px; stroke: none; }
+.splash-bar { transform-box: fill-box; transform-origin: left center; animation: grow .5s var(--ease-out) both; }
+.splash-bar:nth-of-type(3) { animation-delay: .09s; }
+.splash-bar:nth-of-type(4) { animation-delay: .18s; }
+.splash-name { font-size: 26px; line-height: 28px; font-weight: 700; letter-spacing: -0.04em; animation: fade .4s ease-out .15s both; }
+.splash-track { width: 120px; height: 4px; margin-top: 18px; overflow: hidden; border-radius: var(--radius-full); background: #26262A; }
+.splash-fill { display: block; height: 100%; border-radius: inherit; background: #818CF8; transform-origin: left center; transform: scaleX(.85); animation: splash-load .8s var(--ease-out) backwards; }
+.splash.done .splash-fill { transform: none; transition: transform .2s ease-out; }
+@keyframes splash-load { from { transform: scaleX(0); } }
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after, *::backdrop { animation: none !important; transition: none !important; }
 }

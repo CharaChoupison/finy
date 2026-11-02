@@ -6,7 +6,7 @@
 
   var STORE_KEY = 'finy:v1';
   // Affichée en bas des Réglages. À incrémenter avec CACHE dans sw.js à chaque mise à jour.
-  var APP_VERSION = 27;
+  var APP_VERSION = 28;
   var SUB_CATEGORIES = ['Streaming', 'Logiciels', 'Téléphonie', 'Sport', 'Jeux', 'Transport', 'Maison', 'Autre'];
   var BILL_CATEGORIES = ['Logement', 'Énergie', 'Assurance', 'Crédit', 'Impôts', 'Santé', 'Autre'];
   var CAT_PALETTE = ['var(--chart-3)', 'var(--chart-4)', 'var(--ink)', 'var(--muted)'];
@@ -3546,6 +3546,21 @@
   render();
   if (!state.meta.onboarded) obOpen(false);
   checkReminders();
+
+  // Écran de chargement : reste au moins ~0,9 s, la barre se termine, puis fondu vers l'app.
+  var splash = document.getElementById('splash');
+  if (splash) {
+    var splashLeft = reduceMotion ? 0 : 900;
+    setTimeout(function () {
+      splash.classList.add('done');
+      setTimeout(function () {
+        splash.classList.add('out');
+        var gone = function () { if (splash.parentNode) splash.parentNode.removeChild(splash); };
+        splash.addEventListener('transitionend', function (e) { if (e.target === splash) gone(); });
+        setTimeout(gone, 400);
+      }, reduceMotion ? 0 : 220);
+    }, splashLeft);
+  }
 
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {
     window.addEventListener('load', function () {

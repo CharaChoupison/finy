@@ -1,5 +1,5 @@
 /* Finy — service worker : garde l'app disponible hors ligne. */
-var CACHE = 'finy-v27';
+var CACHE = 'finy-v28';
 var LOGOS = 'finy-logos';
 var SHELL = [
   './',
@@ -43,17 +43,31 @@ self.addEventListener('fetch', function (e) {
     return;
   }
 
-  e.respondWith(
-    fetch(e.request).then(function (res) {
-      if (res.ok && (new URL(e.request.url).origin === location.origin || e.request.url.indexOf('fonts.g') >= 0)) {
-        var copy = res.clone();
-        caches.open(CACHE).then(function (c) { c.put(e.request, copy); });
-      }
-      return res;
-    }).catch(function () {
-      return caches.match(e.request).then(function (hit) { return hit || caches.match('index.html'); });
-    })
-  );
+  var network = fetch(e.request).then(function (res) {
+    if (res.ok && (new URL(e.request.url).origin === location.origin || e.request.url.indexOf('fonts.g') >= 0)) {
+      var copy = res.clone();
+      caches.open(CACHE).then(function (c) { c.put(e.request, copy); });
+    }
+    return res;
+  });
+  e.waitUntil(network.catch(function () {}));
+
+  // Si le réseau traîne plus de 2 s, on sert la copie en cache pour ne pas bloquer l'ouverture ;
+  // la réponse du réseau, quand elle arrive, met quand même le cache à jour.
+  e.respondWith(new Promise(function (resolve) {
+    var answered = false;
+    function answer(res) { if (!answered) { answered = true; resolve(res); } }
+    var timer = setTimeout(function () {
+      caches.match(e.request).then(function (hit) { if (hit) answer(hit); });
+    }, 2000);
+    network.then(function (res) {
+      clearTimeout(timer);
+      answer(res);
+    }, function () {
+      clearTimeout(timer);
+      answer(caches.match(e.request).then(function (hit) { return hit || caches.match('index.html'); }));
+    });
+  }));
 });
 
 self.addEventListener('notificationclick', function (e) {
