@@ -30,21 +30,44 @@
     ['credit', 'Crédit', 'Crédit', 5],
     ['impots', 'Impôts', 'Impôts', 15]
   ];
-  // [clé, nom, site, catégorie, prix indicatif par mois]
+  // [clé, nom, site, catégorie, prix indicatif par mois]. Mêmes noms que l'import (KNOWN), pour ne rien dupliquer.
   var OB_SUBS = [
     ['netflix', 'Netflix', 'netflix.com', 'Streaming', 14.99],
-    ['spotify', 'Spotify', 'spotify.com', 'Streaming', 11.12],
     ['disney', 'Disney+', 'disneyplus.com', 'Streaming', 9.99],
     ['prime', 'Amazon Prime', 'amazon.fr', 'Streaming', 6.99],
-    ['deezer', 'Deezer', 'deezer.com', 'Streaming', 11.99],
-    ['youtube', 'YouTube Premium', 'youtube.com', 'Streaming', 12.99],
     ['canal', 'Canal+', 'canalplus.com', 'Streaming', 24.99],
+    ['youtube', 'YouTube Premium', 'youtube.com', 'Streaming', 12.99],
+    ['appletv', 'Apple TV+', 'tv.apple.com', 'Streaming', 9.99],
+    ['max', 'Max', 'max.com', 'Streaming', 9.99],
+    ['paramount', 'Paramount+', 'paramountplus.com', 'Streaming', 7.99],
+    ['crunchyroll', 'Crunchyroll', 'crunchyroll.com', 'Streaming', 6.99],
+    ['spotify', 'Spotify', 'spotify.com', 'Streaming', 11.12],
+    ['deezer', 'Deezer', 'deezer.com', 'Streaming', 11.99],
+    ['applemusic', 'Apple Music', 'music.apple.com', 'Streaming', 10.99],
+    ['amazonmusic', 'Amazon Music', 'music.amazon.fr', 'Streaming', 10.99],
+    ['audible', 'Audible', 'audible.fr', 'Streaming', 9.95],
     ['icloud', 'iCloud+', 'icloud.com', 'Logiciels', 0.99],
+    ['googleone', 'Google One', 'one.google.com', 'Logiciels', 1.99],
+    ['microsoft', 'Microsoft 365', 'microsoft.com', 'Logiciels', 10],
+    ['dropbox', 'Dropbox', 'dropbox.com', 'Logiciels', 11.99],
     ['chatgpt', 'ChatGPT', 'openai.com', 'Logiciels', 22.99],
+    ['claude', 'Claude', 'claude.ai', 'Logiciels', 21.6],
+    ['duolingo', 'Duolingo', 'duolingo.com', 'Logiciels', 12.99],
+    ['gamepass', 'Xbox Game Pass', 'xbox.com', 'Jeux', 14.99],
+    ['psplus', 'PlayStation Plus', 'playstation.com', 'Jeux', 8.99],
+    ['nintendo', 'Nintendo Switch Online', 'nintendo.com', 'Jeux', 3.99],
+    ['discord', 'Discord', 'discord.com', 'Jeux', 9.99],
+    ['sport', 'Salle de sport', '', 'Sport', 29.99],
+    ['basicfit', 'Basic-Fit', 'basic-fit.com', 'Sport', 29.99],
+    ['fitnesspark', 'Fitness Park', 'fitnesspark.fr', 'Sport', 29.95],
+    ['navigo', 'Navigo', 'iledefrance-mobilites.fr', 'Transport', 88.8],
+    ['uberone', 'Uber One', 'uber.com', 'Transport', 5.99],
     ['mobile', 'Forfait mobile', '', 'Téléphonie', 15],
     ['box', 'Box internet', '', 'Téléphonie', 30],
-    ['sport', 'Salle de sport', '', 'Sport', 29.99]
+    ['presse', 'Presse en ligne', '', 'Autre', 9.99]
   ];
+  // Les abonnements proposés sont rangés par famille, dans cet ordre.
+  var OB_SUB_GROUPS = [['Streaming', 'Vidéo, musique et livres audio'], ['Logiciels', 'Logiciels et stockage'], ['Jeux', 'Jeux'], ['Sport', 'Sport'], ['Transport', 'Transport'], ['Téléphonie', 'Téléphone et internet'], ['Autre', 'Autres']];
   // [clé, nom, budget proposé par mois]
   var OB_ENVS = [
     ['courses', 'Alimentation', 300],
@@ -3031,13 +3054,18 @@
   // Les choix d'une liste (charges, abonnements, enveloppes), puis le montant (et le jour) de chacun.
   function obPicker(group, label) {
     var a = state.onboarding.a[group];
-    var opts = OB_LIST[group].map(function (p) {
+    var opt = function (p) {
       var on = !!(a[p[0]] && a[p[0]].on);
       var hint = group === 'subs' ? '≈ ' + euro(p[4]) : group === 'envs' ? euro(p[2]) : '';
       return '<button type="button" class="ob-opt" aria-pressed="' + on + '" data-ob="pick" data-g="' + group + '" data-k="' + p[0] + '">' +
         (group === 'subs' ? subTile({ name: p[1], site: p[2] }, 'ob-tile') : '') +
         '<span class="ob-opt-name">' + esc(p[1]) + '</span>' + (hint ? '<span class="ob-opt-hint">' + hint + '</span>' : '') + obCheckIcon() + '</button>';
-    }).join('');
+    };
+    var grids = group !== 'subs' ? '<div class="ob-grid" role="group" aria-label="' + label + '">' + OB_LIST[group].map(opt).join('') + '</div>'
+      : OB_SUB_GROUPS.map(function (gr) {
+        var list = OB_SUBS.filter(function (p) { return p[3] === gr[0]; });
+        return '<p class="label ob-group-label">' + gr[1] + '</p><div class="ob-grid ob-grid-logos" role="group" aria-label="' + gr[1] + '">' + list.map(opt).join('') + '</div>';
+      }).join('');
     var picked = OB_LIST[group].filter(function (p) { return a[p[0]] && a[p[0]].on; });
     var rows = picked.map(function (p) {
       var x = a[p[0]], at = ' data-g="' + group + '" data-k="' + p[0] + '"';
@@ -3045,7 +3073,7 @@
         '<label class="ob-item-amt"><span class="sr-only">Montant pour ' + esc(p[1]) + ' en euros</span><input class="input" type="text" inputmode="decimal" autocomplete="off" placeholder="0,00" value="' + esc(x.amount) + '" data-ob-f="amt"' + at + '><span aria-hidden="true">€</span></label>' +
         (group === 'envs' ? '' : '<label class="ob-item-day"><span aria-hidden="true">le</span><input class="input" type="text" inputmode="numeric" maxlength="2" autocomplete="off" placeholder="1" value="' + esc(x.day) + '" data-ob-f="day"' + at + ' aria-label="Jour du prélèvement pour ' + esc(p[1]) + '"></label>') + '</div>';
     }).join('');
-    return '<div class="ob-grid' + (group === 'subs' ? ' ob-grid-logos' : '') + '" role="group" aria-label="' + label + '">' + opts + '</div>' +
+    return grids +
       (rows ? '<div class="ob-items"><p class="label">' + (group === 'envs' ? 'Budget par mois' : 'Montant par mois et jour du prélèvement') + '</p>' + rows + '</div>' : '');
   }
 
@@ -3109,7 +3137,7 @@
     },
     subs: function () {
       return {
-        icon: 'card', title: 'Tes abonnements', sub: 'Touche ceux que tu paies. Les prix sont indicatifs : ajuste-les si besoin.',
+        icon: 'card', title: 'Tes abonnements', sub: 'Touche ceux que tu paies, puis vérifie leur prix en bas : ceux proposés sont indicatifs.',
         body: obPicker('subs', 'Abonnements') + '<p class="caption">Il en manque ? Ajoute-les ensuite, ou importe un relevé bancaire dans Abonnements pour les retrouver.</p>',
         preview: true
       };
