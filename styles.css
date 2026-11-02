@@ -1065,11 +1065,16 @@ body.ob-open .toast { z-index: 40; bottom: calc(var(--safe-bottom) + 110px); }
 .input[aria-invalid="true"] { outline: 2px solid var(--danger); outline-offset: 0; }
 
 /* Grand montant (salaire, épargne) */
-.ob-amount { display: flex; align-items: baseline; justify-content: center; gap: 6px; padding: 18px 16px; border-radius: var(--radius-lg); background: var(--surface); cursor: text; }
-.ob-amount:focus-within { outline: 2px solid var(--accent); }
-.ob-amount:has(input[aria-invalid="true"]) { outline: 2px solid var(--danger); }
-.ob-amount input { width: 7ch; min-width: 0; padding: 0; border: 0; outline: none; background: none; color: var(--ink); font-size: 48px; line-height: 56px; font-weight: 700; letter-spacing: -0.03em; text-align: right; font-variant-numeric: tabular-nums; }
-.ob-amount span { font-size: 32px; font-weight: 700; color: var(--muted); }
+.ob-amount { display: flex; align-items: center; justify-content: center; min-height: 136px; cursor: text; font-size: 64px; line-height: 72px; font-weight: 700; letter-spacing: -0.03em; font-variant-numeric: tabular-nums; }
+.ob-amount.long { font-size: 48px; line-height: 56px; }
+/* Le texte invisible (::after) donne sa largeur au champ, pour que le montant reste centré. */
+.ob-amount-num { display: inline-grid; }
+.ob-amount-num::after, .ob-amount input { grid-area: 1 / 1; font: inherit; letter-spacing: inherit; }
+.ob-amount-num::after { content: attr(data-value); visibility: hidden; white-space: pre; }
+.ob-amount input { width: 0; min-width: 100%; padding: 0; border: 0; outline: none; background: none; color: var(--ink); caret-color: var(--accent); text-align: center; }
+.ob-amount input::placeholder { color: var(--muted); opacity: 1; }
+.ob-amount input[aria-invalid="true"] { color: var(--danger); }
+.ob-amount-cur { margin-left: 4px; color: var(--muted); }
 .ob-chips { flex-wrap: wrap; overflow: visible; margin: 0; padding: 0; }
 .ob-chips .chip[aria-checked="true"] { background: var(--primary); color: var(--on-primary); }
 .ob-more { display: flex; flex-wrap: wrap; gap: 8px; }

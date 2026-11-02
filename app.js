@@ -6,7 +6,7 @@
 
   var STORE_KEY = 'finy:v1';
   // Affichée en bas des Réglages. À incrémenter avec CACHE dans sw.js à chaque mise à jour.
-  var APP_VERSION = 23;
+  var APP_VERSION = 24;
   var SUB_CATEGORIES = ['Streaming', 'Logiciels', 'Téléphonie', 'Sport', 'Jeux', 'Transport', 'Maison', 'Autre'];
   var BILL_CATEGORIES = ['Logement', 'Énergie', 'Assurance', 'Crédit', 'Impôts', 'Santé', 'Autre'];
   var CAT_PALETTE = ['var(--chart-3)', 'var(--chart-4)', 'var(--ink)', 'var(--muted)'];
@@ -2717,7 +2717,7 @@
         salary: str(a.salary, 14),
         savings: a.savings === null ? null : str(a.savings, 14),
         bills: {}, subs: {}, envs: {},
-        goal: { key: '', name: '', target: '', months: 12 },
+        goals: {},
         remind: { enabled: !!(a.remind && a.remind.enabled === true), days: 3 },
         theme: ['system', 'light', 'dark'].indexOf(a.theme) >= 0 ? a.theme : 'system'
       }
@@ -2725,7 +2725,7 @@
     Object.keys(OB_OPTIONAL).forEach(function (k) { if (o.skipped && o.skipped[k] === true) out.skipped[k] = true; });
     Object.keys(o.ids || {}).forEach(function (k) {
       var v = o.ids[k];
-      if (/^(bill|sub|env):[a-z]+$|^goal$/.test(k) && v && typeof v.id === 'string') out.ids[k] = { id: v.id.slice(0, 40), own: v.own === true };
+      if (/^(bill|sub|env|goal):[a-z]+$/.test(k) && v && typeof v.id === 'string') out.ids[k] = { id: v.id.slice(0, 40), own: v.own === true };
     });
     Object.keys(OB_LIST).forEach(function (g) {
       OB_LIST[g].forEach(function (p) {
@@ -2733,10 +2733,18 @@
         if (x && typeof x === 'object') out.a[g][p[0]] = { on: x.on === true, amount: str(x.amount, 14), day: str(String(x.day || ''), 2) };
       });
     });
-    var g = a.goal || {};
-    if (OB_GOALS.some(function (p) { return p[0] === g.key; })) {
-      out.a.goal = { key: g.key, name: str(g.name, 40), target: str(g.target, 14), months: [0, 6, 12, 24, 36].indexOf(g.months) >= 0 ? g.months : 12 };
+    // Ancien format (un seul objectif) : repris tel quel.
+    var goals = a.goals && typeof a.goals === 'object' ? a.goals : {};
+    if (a.goal && a.goal.key) {
+      goals = {};
+      goals[a.goal.key] = { on: true, name: a.goal.name, target: a.goal.target, months: a.goal.months };
+      var old = o.ids && o.ids.goal;
+      if (old && typeof old.id === 'string') out.ids['goal:' + a.goal.key] = { id: old.id.slice(0, 40), own: old.own === true };
     }
+    OB_GOALS.forEach(function (p) {
+      var g = goals[p[0]];
+      if (g && typeof g === 'object') out.a.goals[p[0]] = { on: g.on === true, name: str(g.name, 40), target: str(g.target, 14), months: [0, 6, 12, 24, 36].indexOf(g.months) >= 0 ? g.months : 12 };
+    });
     var d = a.remind && a.remind.days;
     if ([1, 2, 3, 5].indexOf(d) >= 0) out.a.remind.days = d;
     return out;
@@ -2753,7 +2761,7 @@
         salary: s.salary > 0 ? plain(s.salary) : '',
         savings: s.savings > 0 ? plain(s.savings) : null,
         bills: {}, subs: {}, envs: {},
-        goal: { key: '', name: '', target: '', months: 12 },
+        goals: {},
         remind: { enabled: s.settings.reminders.enabled, days: [1, 2, 3, 5].indexOf(s.settings.reminders.daysBefore) >= 0 ? s.settings.reminders.daysBefore : 3 },
         theme: s.settings.theme
       }
@@ -2769,6 +2777,12 @@
     adopt('bills', ofKind('bill'), 'bill');
     adopt('subs', ofKind('sub'), 'sub');
     adopt('envs', s.categories, 'env');
+    OB_GOALS.forEach(function (p) {
+      var found = p[1] && s.goals.filter(function (x) { return fold(x.name) === fold(p[1]); })[0];
+      if (!found) return;
+      o.ids['goal:' + p[0]] = { id: found.id, own: false };
+      o.a.goals[p[0]] = { on: true, name: found.name, target: plain(found.target), months: found.open ? 0 : [6, 12, 24, 36].indexOf(found.months) >= 0 ? found.months : 12 };
+    });
     if (!s.categories.length) o.a.envs.courses = { on: true, amount: '300', day: '' };
     var n = o.a.needs;
     if (ofKind('sub').length) n.push('subs');
@@ -2842,10 +2856,17 @@
       if (v === null) return bad('Indique un montant, par exemple 100.', '[data-ob-f="savings"]');
       if (v > obSalary()) return bad('C\'est plus que ton salaire : choisis un montant plus petit.', '[data-ob-f="savings"]');
     }
-    if (step === 'goal' && a.goal.key) {
-      var t = parseAmount(a.goal.target);
-      if (!a.goal.name.trim()) return bad('Donne un nom à ton objectif.', '[data-ob-f="goal-name"]');
-      if (t === null || t <= 0) return bad('Indique le montant à atteindre, par exemple 1 500.', '[data-ob-f="goal-target"]');
+    if (step === 'goal') {
+      var seen = {};
+      for (var j = 0; j < OB_GOALS.length; j++) {
+        var gk = OB_GOALS[j][0], g = a.goals[gk];
+        if (!g || !g.on) continue;
+        var at = '[data-k="' + gk + '"]', t = parseAmount(g.target), nm = fold(g.name.trim());
+        if (!nm) return bad('Donne un nom à ton objectif.', '[data-ob-f="goal-name"]' + at);
+        if (seen[nm]) return bad('Deux objectifs portent le nom « ' + g.name.trim() + ' » : donne-leur des noms différents.', '[data-ob-f="goal-name"]' + at);
+        seen[nm] = true;
+        if (t === null || t <= 0) return bad('Indique le montant à atteindre pour « ' + g.name.trim() + ' », par exemple 1 500.', '[data-ob-f="goal-target"]' + at);
+      }
     }
     return null;
   }
@@ -2925,15 +2946,17 @@
         if (v !== null) state.savings = v;
         break;
       case 'goal':
-        var g = a.goal, target = parseAmount(g.target);
-        obSync('goal', !!g.key && !!g.name.trim() && target > 0, 'goals', g.name.trim(), function (x, isNew) {
-          if (isNew) { x.saved = 0; x.deposits = []; }
-          x.name = g.name.trim().slice(0, 40);
-          x.target = target;
-          x.open = g.months === 0;
-          x.months = g.months || 12;
-          x.monthly = 0;
-          x.start = monthKey(today());
+        OB_GOALS.forEach(function (p) {
+          var g = a.goals[p[0]] || {}, name = (g.name || '').trim(), target = parseAmount(g.target || '');
+          obSync('goal:' + p[0], g.on && !!name && target > 0, 'goals', name, function (x, isNew) {
+            if (isNew) { x.saved = 0; x.deposits = []; }
+            x.name = name.slice(0, 40);
+            x.target = target;
+            x.open = g.months === 0;
+            x.months = g.months || 12;
+            x.monthly = 0;
+            x.start = monthKey(today());
+          });
         });
         break;
       case 'remind':
@@ -3080,6 +3103,28 @@
       (rows ? '<div class="ob-items"><p class="label">' + (group === 'envs' ? 'Budget par mois' : 'Montant par mois et jour du prélèvement') + '</p>' + rows + '</div>' : '');
   }
 
+  // Grand montant centré, comme dans « Nouvelle dépense ». La largeur suit le texte tapé (voir obAmountSize).
+  function obAmount(label, value, f) {
+    return '<label class="ob-amount' + ((value || '').length > 7 ? ' long' : '') + '"><span class="sr-only">' + label + '</span>' +
+      '<span class="ob-amount-num" data-value="' + esc(value || '0') + '"><input type="text" inputmode="decimal" autocomplete="off" placeholder="0" value="' + esc(value) + '" data-ob-f="' + f + '"></span>' +
+      '<span class="ob-amount-cur" aria-hidden="true">€</span></label>';
+  }
+
+  function obAmountSize(el) {
+    var box = el.closest('.ob-amount');
+    if (!box) return;
+    el.parentNode.dataset.value = el.value || '0';
+    box.classList.toggle('long', el.value.length > 7);
+  }
+
+  // Effort par mois d'un objectif choisi pendant le parcours.
+  function obGoalLine(g) {
+    var t = parseAmount(g.target);
+    return g.months === 0 ? '<span class="strong">Tu verses quand tu veux</span><span class="muted">rien n\'est réservé chaque mois</span>'
+      : t > 0 ? '<span class="strong">' + euro(Math.ceil(t / g.months * 100) / 100) + ' par mois</span><span class="muted">pendant ' + durationLabel(g.months) + '</span>'
+      : '<span class="muted">Indique un montant pour voir l\'effort par mois.</span>';
+  }
+
   // Résumé d'une liste : « Loyer, Mutuelle · 685,00 € par mois ».
   function obSum(items, none) {
     if (!items.length) return none;
@@ -3126,7 +3171,7 @@
     salary: function (a) {
       return {
         icon: 'wallet', title: 'Combien tu gagnes par mois&nbsp;?', sub: 'Ton salaire net, celui qui arrive sur ton compte. C\'est la base de tout le calcul.',
-        body: '<label class="ob-amount"><span class="sr-only">Salaire net par mois, en euros</span><input type="text" inputmode="decimal" autocomplete="off" placeholder="0" value="' + esc(a.salary) + '" data-ob-f="salary"><span aria-hidden="true">€</span></label>' +
+        body: obAmount('Salaire net par mois, en euros', a.salary, 'salary') +
           '<p class="caption ob-center">Une prime, un remboursement ? Tu les ajouteras à part avec « Revenu ».</p>',
         preview: true, focus: '[data-ob-f="salary"]'
       };
@@ -3162,30 +3207,29 @@
           var amt = Math.round(sal * p) / 100;
           return '<button type="button" class="chip" data-ob="pct" data-k="' + amt + '" aria-pressed="' + (v !== null && Math.abs(v - amt) < 0.005) + '">' + (p ? p + ' %' : 'Rien') + '</button>';
         }).join('') + '</div>' +
-          '<label class="ob-amount"><span class="sr-only">Épargne par mois, en euros</span><input type="text" inputmode="decimal" autocomplete="off" placeholder="0" value="' + esc(a.savings) + '" data-ob-f="savings"><span aria-hidden="true">€</span></label>',
+          obAmount('Épargne par mois, en euros', a.savings, 'savings'),
         preview: true
       };
     },
     goal: function (a) {
-      var g = a.goal;
+      var picked = OB_GOALS.filter(function (p) { return a.goals[p[0]] && a.goals[p[0]].on; });
       var cards = OB_GOALS.map(function (p) {
-        return '<button type="button" class="ob-opt" role="radio" aria-checked="' + (g.key === p[0]) + '" data-ob="goal" data-k="' + p[0] + '"><span class="ob-opt-name">' + (p[1] || 'Autre projet') + '</span>' + obCheckIcon() + '</button>';
+        var on = !!(a.goals[p[0]] && a.goals[p[0]].on);
+        return '<button type="button" class="ob-opt" role="checkbox" aria-checked="' + on + '" data-ob="goal" data-k="' + p[0] + '"><span class="ob-opt-name">' + (p[1] || 'Autre projet') + '</span>' + obCheckIcon() + '</button>';
       }).join('');
-      var form = '';
-      if (g.key) {
-        var t = parseAmount(g.target);
-        form = '<div class="ob-items"><label class="field"><span>Nom</span><input class="input" type="text" maxlength="40" autocomplete="off" placeholder="Mon projet" value="' + esc(g.name) + '" data-ob-f="goal-name"></label>' +
-          '<label class="field"><span>Montant à atteindre (€)</span><input class="input" type="text" inputmode="decimal" autocomplete="off" placeholder="0,00" value="' + esc(g.target) + '" data-ob-f="goal-target"></label>' +
+      var forms = picked.map(function (p) {
+        var g = a.goals[p[0]], at = ' data-k="' + p[0] + '"';
+        return '<div class="ob-items"><label class="field"><span>Nom</span><input class="input" type="text" maxlength="40" autocomplete="off" placeholder="Mon projet" value="' + esc(g.name) + '" data-ob-f="goal-name"' + at + '></label>' +
+          '<label class="field"><span>Montant à atteindre (€)</span><input class="input" type="text" inputmode="decimal" autocomplete="off" placeholder="0,00" value="' + esc(g.target) + '" data-ob-f="goal-target"' + at + '></label>' +
           '<div class="field"><span>En combien de temps&nbsp;?</span><div class="chips ob-chips" role="radiogroup" aria-label="Durée">' + [[6, '6 mois'], [12, '1 an'], [24, '2 ans'], [36, '3 ans'], [0, 'Sans échéance']].map(function (d) {
-            return '<button type="button" class="chip" role="radio" aria-checked="' + (g.months === d[0]) + '" data-ob="months" data-k="' + d[0] + '">' + d[1] + '</button>';
+            return '<button type="button" class="chip" role="radio" aria-checked="' + (g.months === d[0]) + '" data-ob="months" data-g="' + p[0] + '" data-k="' + d[0] + '">' + d[1] + '</button>';
           }).join('') + '</div></div>' +
-          '<p class="pill-info" id="ob-goal-line">' + (g.months === 0 ? '<span class="strong">Tu verses quand tu veux</span><span class="muted">rien n\'est réservé chaque mois</span>'
-            : t > 0 ? '<span class="strong">' + euro(Math.ceil(t / g.months * 100) / 100) + ' par mois</span><span class="muted">pendant ' + durationLabel(g.months) + '</span>' : '<span class="muted">Indique un montant pour voir l\'effort par mois.</span>') + '</p></div>';
-      }
+          '<p class="pill-info" id="ob-goal-line-' + p[0] + '">' + obGoalLine(g) + '</p></div>';
+      }).join('');
       return {
-        icon: 'target', title: 'Un objectif en tête&nbsp;?', sub: 'Un voyage, un coussin de sécurité… Finy calcule combien mettre de côté chaque mois.',
-        body: '<div class="ob-grid" role="radiogroup" aria-label="Objectif">' + cards + '</div>' + form,
-        preview: !!g.key, next: g.key ? null : 'Pas d\'objectif pour l\'instant'
+        icon: 'target', title: 'Des objectifs en tête&nbsp;?', sub: 'Un voyage, un coussin de sécurité… Choisis-en autant que tu veux, Finy calcule combien mettre de côté chaque mois.',
+        body: '<div class="ob-grid" role="group" aria-label="Objectifs">' + cards + '</div>' + forms,
+        preview: picked.length > 0, next: picked.length ? null : 'Pas d\'objectif pour l\'instant'
       };
     },
     remind: function (a) {
@@ -3357,16 +3401,21 @@
         a.savings = plain(parseFloat(k));
         return obChoice('[data-ob="pct"][data-k="' + k + '"]');
       case 'goal':
-        if (a.goal.key === k) { a.goal.key = ''; return obChoice(null); }
-        var preset = OB_GOALS.filter(function (x) { return x[0] === k; })[0];
-        var target = preset[2] === null ? Math.max(500, Math.round(obSalary() * 3 / 100) * 100) : preset[2];
-        a.goal = { key: k, name: preset[1], target: plain(target), months: preset[3] };
+        var gx = a.goals[k];
+        if (gx) gx.on = !gx.on;
+        else {
+          var preset = OB_GOALS.filter(function (x) { return x[0] === k; })[0];
+          var target = preset[2] === null ? Math.max(500, Math.round(obSalary() * 3 / 100) * 100) : preset[2];
+          gx = a.goals[k] = { on: true, name: preset[1], target: plain(target), months: preset[3] };
+        }
         obChoice('[data-ob="goal"][data-k="' + k + '"]');
-        if (!preset[1]) { var nm = obEl.querySelector('[data-ob-f="goal-name"]'); if (nm) nm.focus(); }
+        // Un objectif sans nom (Autre projet) : on va directement au champ.
+        var nm = gx.on && !gx.name.trim() && obEl.querySelector('[data-ob-f="goal-name"][data-k="' + k + '"]');
+        if (nm) nm.focus();
         return;
       case 'months':
-        a.goal.months = parseInt(k, 10);
-        return obChoice('[data-ob="months"][data-k="' + k + '"]');
+        a.goals[el.dataset.g].months = parseInt(k, 10);
+        return obChoice('[data-ob="months"][data-g="' + el.dataset.g + '"][data-k="' + k + '"]');
       case 'days':
         a.remind.days = parseInt(k, 10);
         return obChoice('[data-ob="days"][data-k="' + k + '"]');
@@ -3395,6 +3444,7 @@
       a.name = el.value.slice(0, 40);
       document.getElementById('ob-hello').textContent = 'Bonjour' + (a.name.trim() ? ' ' + a.name.trim() : '');
     }
+    obAmountSize(el);
     if (f === 'salary') a.salary = el.value.slice(0, 14);
     if (f === 'savings') {
       a.savings = el.value.slice(0, 14);
@@ -3402,11 +3452,11 @@
       obEl.querySelectorAll('[data-ob="pct"]').forEach(function (c) { c.setAttribute('aria-pressed', String(v !== null && Math.abs(v - parseFloat(c.dataset.k)) < 0.005)); });
     }
     if (f === 'amt' || f === 'day') a[el.dataset.g][el.dataset.k][f === 'amt' ? 'amount' : 'day'] = el.value.slice(0, f === 'amt' ? 14 : 2);
-    if (f === 'goal-name') a.goal.name = el.value.slice(0, 40);
+    if (f === 'goal-name') a.goals[el.dataset.k].name = el.value.slice(0, 40);
     if (f === 'goal-target') {
-      a.goal.target = el.value.slice(0, 14);
-      var t = parseAmount(a.goal.target), line = document.getElementById('ob-goal-line');
-      if (line && a.goal.months) line.innerHTML = t > 0 ? '<span class="strong">' + euro(Math.ceil(t / a.goal.months * 100) / 100) + ' par mois</span><span class="muted">pendant ' + durationLabel(a.goal.months) + '</span>' : '<span class="muted">Indique un montant pour voir l\'effort par mois.</span>';
+      var gt = a.goals[el.dataset.k], line = document.getElementById('ob-goal-line-' + el.dataset.k);
+      gt.target = el.value.slice(0, 14);
+      if (line) line.innerHTML = obGoalLine(gt);
     }
     if (el.getAttribute('aria-invalid')) {
       el.removeAttribute('aria-invalid');
