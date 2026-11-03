@@ -6,7 +6,7 @@
 
   var STORE_KEY = 'finy:v1';
   // Affichée en bas des Réglages. À incrémenter avec CACHE dans sw.js à chaque mise à jour.
-  var APP_VERSION = 30;
+  var APP_VERSION = 31;
   // Serveur de rappels en arrière-plan (dossier push-server/). Vide : les rappels ne partent qu'à
   // l'ouverture de Finy. L'adresse doit aussi figurer dans connect-src (CSP de index.html).
   var PUSH_URL = 'https://finy-push.finy-push.workers.dev';
