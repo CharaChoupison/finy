@@ -17,5 +17,5 @@ crons = ["0 * * * *"]
 [[d1_databases]]
 binding = "DB"
 database_name = "finy-push"
-database_id = "A_REMPLACER"
+database_id = "109969ee-fdd0-4b52-8acb-a5b5300b041a"
 migrations_dir = "migrations"
