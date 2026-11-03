@@ -1,0 +1,21 @@
+name = "finy-push"
+main = "src/index.js"
+compatibility_date = "2026-10-01"
+
+[vars]
+# Adresse(s) du site Finy autorisée(s) à parler au serveur, séparées par des virgules.
+ALLOWED_ORIGINS = "https://charachoupison.github.io"
+# Contact exigé par les services de push (Apple refuse les adresses en localhost).
+VAPID_SUBJECT = "https://charachoupison.github.io/finy/"
+# Nombre d'appareils maximum : protège la base si quelqu'un essaie de la remplir.
+MAX_DEVICES = "20"
+# VAPID_PUBLIC_KEY et VAPID_PRIVATE_KEY sont des secrets : voir README.md.
+
+[triggers]
+crons = ["0 * * * *"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "finy-push"
+database_id = "A_REMPLACER"
+migrations_dir = "migrations"

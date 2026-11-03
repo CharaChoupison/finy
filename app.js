@@ -6,7 +6,13 @@
 
   var STORE_KEY = 'finy:v1';
   // Affichée en bas des Réglages. À incrémenter avec CACHE dans sw.js à chaque mise à jour.
-  var APP_VERSION = 28;
+  var APP_VERSION = 29;
+  // Serveur de rappels en arrière-plan (dossier push-server/). Vide : les rappels ne partent qu'à
+  // l'ouverture de Finy. L'adresse doit aussi figurer dans connect-src (CSP de index.html).
+  var PUSH_URL = '';
+  var PUSH_STORE = 'finy:push';
+  var PUSH_HOUR = 9;
+  var PUSH_DAYS = 60;
   var SUB_CATEGORIES = ['Streaming', 'Logiciels', 'Téléphonie', 'Sport', 'Jeux', 'Transport', 'Maison', 'Autre'];
   var BILL_CATEGORIES = ['Logement', 'Énergie', 'Assurance', 'Crédit', 'Impôts', 'Santé', 'Autre'];
   var CAT_PALETTE = ['var(--chart-3)', 'var(--chart-4)', 'var(--ink)', 'var(--muted)'];
@@ -145,7 +151,7 @@
         homeCount: 3,
         annualMode: 'actual',
         alertDays: 5,
-        reminders: { enabled: false, daysBefore: 3, sameDay: true }
+        reminders: { enabled: false, daysBefore: 3, sameDay: true, background: false }
       },
       notified: {}
     };
@@ -228,6 +234,7 @@
     out.settings.reminders.enabled = r.enabled === true;
     out.settings.reminders.daysBefore = Math.min(30, Math.max(1, Math.round(num(r.daysBefore, 3))));
     out.settings.reminders.sameDay = r.sameDay !== false;
+    out.settings.reminders.background = r.background === true;
     out.notified = data.notified && typeof data.notified === 'object' ? data.notified : {};
     return out;
   }
@@ -246,6 +253,7 @@
     snapshot();
     try {
       localStorage.setItem(STORE_KEY, JSON.stringify(state));
+      schedulePushSync();
       return true;
     } catch (e) {
       toast("Impossible d'enregistrer sur cet appareil");
@@ -1580,10 +1588,16 @@
     if (s.reminders.enabled) {
       html += '<div class="row"><span class="row-main"><span>Me prévenir</span></span>' + stepper('daysBefore', s.reminders.daysBefore, ' avant') + '</div>' +
         '<div class="row"><span class="row-main"><span>Aussi le jour même</span></span><button type="button" class="switch" role="switch" aria-checked="' + s.reminders.sameDay + '" aria-label="Rappel le jour du paiement" data-action="toggle-sameday"></button></div>' +
+        (pushAvailable()
+          ? '<div class="row" style="min-height:64px"><span class="row-main"><span>Même quand Finy est fermée</span><span class="caption">Vers ' + PUSH_HOUR + ' h, le jour du rappel</span></span>' +
+            '<button type="button" class="switch" role="switch" aria-checked="' + s.reminders.background + '" aria-label="Rappels même quand Finy est fermée" data-action="toggle-background"></button></div>'
+          : '') +
         '<button type="button" class="row row-link" data-action="test-notif">Envoyer une notification de test</button>';
     }
     html += '</div><p class="caption">' + (notif
-      ? 'Les rappels sont vérifiés quand tu ouvres Finy. Sur iPhone, ils fonctionnent une fois Finy ajoutée à l\'écran d\'accueil.'
+      ? (s.reminders.enabled && s.reminders.background && pushAvailable()
+        ? 'Un petit serveur réveille Finy à l\'heure des rappels. Il ne reçoit que ces heures : les noms et les montants restent sur cet appareil.'
+        : 'Les rappels sont vérifiés quand tu ouvres Finy. Sur iPhone, ils fonctionnent une fois Finy ajoutée à l\'écran d\'accueil.')
       : 'Les notifications ne sont pas disponibles ici. Sur iPhone, ajoute d\'abord Finy à l\'écran d\'accueil (Partager › Sur l\'écran d\'accueil), puis ouvre-la depuis son icône.') + '</p></section>';
 
     html += '<section class="section" style="gap:12px"><h2 class="heading">Données</h2><div class="group">' +
@@ -1934,44 +1948,59 @@
     return Promise.resolve();
   }
 
+  // Rappels prévus entre `from` et `from + days` (jours d'envoi), avec leur texte.
+  // La clé identifie un rappel pour ne l'envoyer qu'une fois, à l'ouverture comme en arrière-plan.
+  function reminderPlan(from, days) {
+    var r = state.settings.reminders;
+    var last = new Date(from.getFullYear(), from.getMonth(), from.getDate() + days);
+    var shift = function (d, n) { return new Date(d.getFullYear(), d.getMonth(), d.getDate() + n); };
+    var inDays = r.daysBefore === 1 ? 'demain' : 'dans ' + r.daysBefore + ' jours';
+    var out = [];
+    var add = function (day, key, title, body) {
+      if (day >= from && day <= last) out.push({ day: iso(day), key: key, title: title, body: body });
+    };
+    state.subs.forEach(function (s) {
+      if (s.paused) return;
+      for (var c = nextDate(s, from); c <= shift(last, r.daysBefore); c = nextDate(s, shift(c, 1))) {
+        var title = s.name + ' · ' + euro(s.amount);
+        var date = shortDate.format(c); // « 8 nov. » finit déjà par un point, « 2 mai » non
+        add(shift(c, -r.daysBefore), s.id + ':' + iso(c) + ':before', title, 'Prélèvement ' + inDays + ', le ' + date + (/\.$/.test(date) ? '' : '.'));
+        if (r.sameDay) add(c, s.id + ':' + iso(c) + ':day', title, "Prélèvement prévu aujourd'hui.");
+      }
+      // Fin d'un essai gratuit : le moment de résilier si on ne veut pas le garder.
+      if (!s.trialEnd) return;
+      var end = parseIso(s.trialEnd);
+      var then = '. Ensuite : ' + euro(s.amount) + (s.frequency === 'year' ? ' par an' : ' par mois') + '. Pense à résilier si tu ne le gardes pas.';
+      add(shift(end, -r.daysBefore), s.id + ':' + s.trialEnd + ':trial-before', 'Fin de l\'essai ' + s.name, 'Ton essai gratuit se termine ' + inDays + then);
+      if (r.sameDay) add(end, s.id + ':' + s.trialEnd + ':trial-day', 'Fin de l\'essai ' + s.name, 'Ton essai gratuit se termine aujourd\'hui' + then);
+    });
+    return out;
+  }
+
   function checkReminders() {
     var r = state.settings.reminders;
     if (!r.enabled || !('Notification' in window) || Notification.permission !== 'granted') return;
-    var t = today();
-    var keep = {};
-    var changed = false;
-    upcoming().forEach(function (u) {
-      var when = u.diff === r.daysBefore ? 'before' : (r.sameDay && u.diff === 0 ? 'day' : null);
-      if (!when) return;
-      var key = u.sub.id + ':' + iso(u.date) + ':' + when;
-      keep[key] = true;
-      if (state.notified[key]) return;
-      state.notified[key] = iso(t);
-      changed = true;
-      notify(u.sub.name + ' · ' + euro(u.sub.amount),
-        when === 'day' ? "Prélèvement prévu aujourd'hui." : 'Prélèvement ' + (u.diff === 1 ? 'demain' : 'dans ' + u.diff + ' jours') + ', le ' + shortDate.format(u.date) + '.',
-        key);
+    // Les rappels déjà affichés en arrière-plan par le service worker ne repartent pas.
+    kv('readonly', function (st) { return st.get('shown'); }).catch(function () { return null; }).then(function (shown) {
+      var t = today();
+      var keep = {};
+      var changed = false;
+      Object.keys(shown || {}).forEach(function (k) {
+        if (!state.notified[k] && isIsoDate(shown[k]) && diffDays(t, parseIso(shown[k])) <= 40) { state.notified[k] = shown[k]; changed = true; }
+      });
+      reminderPlan(t, 0).forEach(function (n) {
+        keep[n.key] = true;
+        if (state.notified[n.key]) return;
+        state.notified[n.key] = iso(t);
+        changed = true;
+        notify(n.title, n.body, n.key);
+      });
+      Object.keys(state.notified).forEach(function (k) {
+        if (!keep[k] && diffDays(t, new Date(state.notified[k])) > 40) { delete state.notified[k]; changed = true; }
+      });
+      if (changed) save();
+      else schedulePushSync();
     });
-    // Fin d'un essai gratuit : le moment de résilier si on ne veut pas le garder.
-    state.subs.forEach(function (s) {
-      if (s.paused || !s.trialEnd) return;
-      var diff = diffDays(parseIso(s.trialEnd), t);
-      var when = diff === r.daysBefore ? 'trial-before' : (r.sameDay && diff === 0 ? 'trial-day' : null);
-      if (!when) return;
-      var key = s.id + ':' + s.trialEnd + ':' + when;
-      keep[key] = true;
-      if (state.notified[key]) return;
-      state.notified[key] = iso(t);
-      changed = true;
-      notify('Fin de l\'essai ' + s.name,
-        (diff === 0 ? 'Ton essai gratuit se termine aujourd\'hui' : 'Ton essai gratuit se termine ' + (diff === 1 ? 'demain' : 'dans ' + diff + ' jours')) +
-        '. Ensuite : ' + euro(s.amount) + (s.frequency === 'year' ? ' par an' : ' par mois') + '. Pense à résilier si tu ne le gardes pas.',
-        key);
-    });
-    Object.keys(state.notified).forEach(function (k) {
-      if (!keep[k] && diffDays(t, new Date(state.notified[k])) > 40) { delete state.notified[k]; changed = true; }
-    });
-    if (changed) save();
   }
 
   function toggleReminders() {
@@ -1979,6 +2008,7 @@
     var sw = document.querySelector('[data-action="toggle-reminders"]');
     if (r.enabled) {
       r.enabled = false;
+      if (r.background) { r.background = false; pushForget(); }
       save();
       flipSwitch(sw, render);
       return;
@@ -1995,11 +2025,150 @@
     });
   }
 
+  // ---------- Rappels en arrière-plan ----------
+  // Le serveur (PUSH_URL) reçoit seulement l'adresse push de l'appareil et l'heure des réveils :
+  // 9 h, chaque jour qui a au moins un rappel. Le texte reste ici, rangé dans IndexedDB, où le
+  // service worker le lit quand le réveil arrive (voir sw.js).
+
+  function pushAvailable() {
+    return !!PUSH_URL && 'serviceWorker' in navigator && 'PushManager' in window && 'indexedDB' in window && 'Notification' in window;
+  }
+
+  // Petit magasin clé → valeur partagé avec le service worker.
+  function kv(mode, fn) {
+    return new Promise(function (resolve, reject) {
+      if (!('indexedDB' in window)) return reject(new Error('indexedDB'));
+      var open = indexedDB.open('finy', 1);
+      open.onupgradeneeded = function () { open.result.createObjectStore('kv'); };
+      open.onerror = function () { reject(open.error); };
+      open.onsuccess = function () {
+        var db = open.result;
+        var tx = db.transaction('kv', mode);
+        var req = fn(tx.objectStore('kv'));
+        tx.oncomplete = function () { db.close(); resolve(req && req.result); };
+        tx.onerror = tx.onabort = function () { db.close(); reject(tx.error); };
+      };
+    });
+  }
+
+  // Identifiant et jeton secret de cet appareil auprès du serveur. Hors de `state` : jamais exportés.
+  function pushInfo() {
+    try { return JSON.parse(localStorage.getItem(PUSH_STORE)) || {}; } catch (e) { return {}; }
+  }
+
+  function b64url(bytes) {
+    var s = '';
+    for (var i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+    return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  }
+
+  function pushFetch(path, body) {
+    var opts = body ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : {};
+    return fetch(PUSH_URL + path, opts).then(function (res) { return res.ok ? res.json() : Promise.reject(new Error('push ' + res.status)); });
+  }
+
+  var pushTimer = null;
+  function schedulePushSync() {
+    if (!state.settings.reminders.background) return;
+    clearTimeout(pushTimer);
+    pushTimer = setTimeout(function () { pushSync(false).catch(function () {}); }, 1500);
+  }
+
+  // Range le texte des rappels des deux prochains mois pour le service worker, puis envoie au serveur
+  // les heures de réveil. Le réseau n'est sollicité que si quelque chose a changé (ou tous les 3 jours,
+  // pour que le serveur sache que l'appareil est toujours là).
+  function pushSync(force) {
+    var r = state.settings.reminders;
+    if (!pushAvailable() || !r.enabled || !r.background || Notification.permission !== 'granted') return Promise.resolve(false);
+    var now = Date.now();
+    var days = {};
+    var times = [];
+    reminderPlan(today(), PUSH_DAYS).forEach(function (n) {
+      (days[n.day] = days[n.day] || []).push({ key: n.key, title: n.title, body: n.body });
+      if (state.notified[n.key]) return;
+      var d = parseIso(n.day);
+      var at = new Date(d.getFullYear(), d.getMonth(), d.getDate(), PUSH_HOUR).getTime();
+      if (at > now && times.indexOf(at / 1000) < 0) times.push(at / 1000);
+    });
+    var info = pushInfo();
+    return kv('readwrite', function (st) { return st.put({ days: days, notified: Object.assign({}, state.notified) }, 'plan'); })
+      .then(function () { return navigator.serviceWorker.ready; })
+      .then(function (reg) { return pushSubscription(reg, info); })
+      .then(function (sub) {
+        var sig = sub.endpoint + '|' + times.join(',');
+        if (!force && info.sig === sig && now - (info.at || 0) < 3 * 86400000) return true;
+        if (!info.id) {
+          info.id = b64url(crypto.getRandomValues(new Uint8Array(16)));
+          info.token = b64url(crypto.getRandomValues(new Uint8Array(32)));
+        }
+        return pushFetch('/sync', { id: info.id, token: info.token, endpoint: sub.endpoint, times: times }).then(function () {
+          info.sig = sig;
+          info.at = now;
+          try { localStorage.setItem(PUSH_STORE, JSON.stringify(info)); } catch (e) { /* on réessaiera */ }
+          return true;
+        });
+      });
+  }
+
+  // Abonnement push de l'appareil, créé avec la clé publique du serveur (demandée une fois).
+  function pushSubscription(reg, info) {
+    return reg.pushManager.getSubscription().then(function (sub) {
+      if (sub && info.key) return sub;
+      return pushFetch('/key').then(function (data) {
+        var current = sub && sub.options && sub.options.applicationServerKey ? b64url(new Uint8Array(sub.options.applicationServerKey)) : null;
+        info.key = data.key;
+        if (sub && current === data.key) return sub;
+        var raw = atob(data.key.replace(/-/g, '+').replace(/_/g, '/'));
+        var key = Uint8Array.from(raw, function (c) { return c.charCodeAt(0); });
+        return (sub ? sub.unsubscribe() : Promise.resolve()).then(function () {
+          return reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
+        });
+      });
+    });
+  }
+
+  // Coupe tout : le serveur oublie l'appareil, l'abonnement push et les textes rangés sont supprimés.
+  function pushForget() {
+    var info = pushInfo();
+    try { localStorage.removeItem(PUSH_STORE); } catch (e) { /* rien à effacer */ }
+    var jobs = [kv('readwrite', function (st) { return st.delete('plan'); }).catch(function () {})];
+    if ('serviceWorker' in navigator && 'PushManager' in window) {
+      jobs.push(navigator.serviceWorker.ready.then(function (reg) { return reg.pushManager.getSubscription(); })
+        .then(function (sub) { return sub && sub.unsubscribe(); }).catch(function () {}));
+    }
+    if (info.id && PUSH_URL) jobs.push(pushFetch('/forget', { id: info.id, token: info.token }).catch(function () {}));
+    return Promise.all(jobs);
+  }
+
+  function toggleBackground() {
+    var r = state.settings.reminders;
+    var sw = document.querySelector('[data-action="toggle-background"]');
+    if (r.background) {
+      r.background = false;
+      pushForget();
+      save();
+      flipSwitch(sw, render);
+      return;
+    }
+    r.background = true;
+    pushSync(true).then(function (ok) {
+      if (!ok) throw new Error('push');
+      save();
+      flipSwitch(sw, render);
+      toast('Rappels activés, même Finy fermée');
+    }).catch(function () {
+      r.background = false;
+      toast('Impossible de joindre le serveur de rappels');
+    });
+  }
+
   // ---------- Sauvegarde ----------
 
   function exportData() {
     var data = JSON.parse(JSON.stringify(state));
     delete data.notified;
+    // L'abonnement aux rappels en arrière-plan est propre à cet appareil : à réactiver ailleurs.
+    data.settings.reminders.background = false;
     data.meta.lastExport = iso(today());
     var name = 'finy-sauvegarde-' + iso(today()) + '.json';
     var blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
@@ -2608,6 +2777,7 @@
         target[key] = Math.min(30, Math.max(1, target[key] + parseInt(v, 10)));
         save(); return render();
       case 'toggle-reminders': return toggleReminders();
+      case 'toggle-background': return toggleBackground();
       case 'toggle-sameday':
         state.settings.reminders.sameDay = !state.settings.reminders.sameDay;
         save(); return flipSwitch(el, render);

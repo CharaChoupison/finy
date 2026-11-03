@@ -1,0 +1,12 @@
+# Fichiers créés par macOS
+.DS_Store
+
+# Secrets et réglages locaux : jamais dans le dépôt (il est public)
+.env
+.env.*
+.dev.vars
+.dev.vars.*
+
+# Outils du serveur de rappels
+node_modules/
+.wrangler/

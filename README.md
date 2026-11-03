@@ -10,7 +10,8 @@ Web app pour savoir ce qu'il te reste chaque mois, après ton épargne et tes ab
 | `styles.css` | Le design (couleurs du design system Finy, thèmes clair et sombre) |
 | `app.js` | Toute la logique : les 5 écrans, les calculs, les rappels, la sauvegarde |
 | `manifest.webmanifest` | Nom, icône et couleurs de l'app installée |
-| `sw.js` | Garde l'app disponible sans connexion |
+| `sw.js` | Garde l'app disponible sans connexion, affiche les rappels reçus en arrière-plan |
+| `push-server/` | Serveur de rappels facultatif (Cloudflare Workers, gratuit) : voir `push-server/README.md` |
 | `icons/` | Icône de l'app (180, 192 et 512 px) |
 | `vendor/pdfjs/` | [pdf.js](https://mozilla.github.io/pdf.js/) 3.11.174 (Mozilla, licence Apache 2.0), pour lire les factures et relevés en PDF |
 
@@ -44,7 +45,7 @@ Ton code est visible par tout le monde, mais pas tes données : elles restent su
 2. Touche **Partager**, puis **Sur l'écran d'accueil**, puis **Ajouter**.
 3. Ouvre Finy depuis son icône. Elle s'affiche en plein écran, comme une app.
 
-Pour les rappels, va dans **Réglages › Rappels**, active-les et accepte l'autorisation. Ils sont vérifiés à chaque ouverture de Finy.
+Pour les rappels, va dans **Réglages › Rappels**, active-les et accepte l'autorisation. Ils sont vérifiés à chaque ouverture de Finy. Si le serveur de rappels est en place (voir `push-server/README.md`), active aussi **Même quand Finy est fermée** : les rappels arrivent alors vers 9 h, app fermée. Le serveur ne reçoit que l'heure des réveils, jamais les noms ni les montants.
 
 ## L'utiliser sur ordinateur
 
