@@ -1,5 +1,5 @@
 /* Finy — service worker : garde l'app disponible hors ligne. */
-var CACHE = 'finy-v31';
+var CACHE = 'finy-v32';
 var LOGOS = 'finy-logos';
 var SHELL = [
   './',
@@ -62,7 +62,9 @@ self.addEventListener('fetch', function (e) {
     var answered = false;
     function answer(res) { if (!answered) { answered = true; resolve(res); } }
     var timer = setTimeout(function () {
-      caches.match(e.request).then(function (hit) { if (hit) answer(hit); });
+      // Une ouverture par un raccourci (« ?action=depense ») sert la page de l'app gardée en cache.
+      caches.match(e.request).then(function (hit) { return hit || (e.request.mode === 'navigate' ? caches.match('index.html') : null); })
+        .then(function (hit) { if (hit) answer(hit); });
     }, 2000);
     network.then(function (res) {
       clearTimeout(timer);

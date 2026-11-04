@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Tests · Finy</title>
+  <style>
+    body { margin: 0; padding: 24px 16px; background: #fff; color: #111; font: 14px/1.5 ui-monospace, Menlo, monospace; }
+    h1 { font: 600 20px/1.3 system-ui, sans-serif; margin: 0 0 4px; }
+    #summary { font: 600 16px/1.4 system-ui, sans-serif; margin: 0 0 16px; }
+    .ok { color: #137333; } .ko { color: #c5221f; }
+    #out p { margin: 2px 0; white-space: pre-wrap; }
+    #out h2 { font: 600 15px/1.3 system-ui, sans-serif; margin: 16px 0 4px; }
+    .app-host { display: none; }
+    @media (prefers-color-scheme: dark) { body { background: #111; color: #eee; } .ok { color: #81c995; } .ko { color: #f28b82; } }
+  </style>
+</head>
+<body>
+  <h1>Tests de Finy</h1>
+  <p id="summary">En cours…</p>
+  <div id="out"></div>
+
+  <!-- Le squelette de l'app (caché) : app.js en a besoin pour démarrer. -->
+  <div class="app-host">
+    <div id="app"><main id="view"></main><nav class="tabbar"><span class="tab-pill"></span></nav></div>
+    <dialog id="sheet"><form id="sheet-form"></form></dialog>
+    <div id="quick" hidden></div>
+    <div id="onboarding" hidden></div>
+    <div id="toast"></div>
+  </div>
+
+  <script>
+    // Données à part (clé finy:test), date fixe, parcours guidé considéré comme fait.
+    window.FINY_TEST = { now: '2026-11-04T12:00:00' };
+    try { localStorage.setItem('finy:test', JSON.stringify({ meta: { onboarded: '2026-01-01' } })); } catch (e) {}
+  </script>
+  <script src="../app.js"></script>
+  <script src="tests.js"></script>
+</body>
+</html>

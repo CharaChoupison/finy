@@ -4,9 +4,11 @@
 
   // ---------- Constantes ----------
 
-  var STORE_KEY = 'finy:v1';
+  // Page de tests (tests/index.html) : données à part, date simulable, fonctions exposées.
+  var TEST = window.FINY_TEST || null;
+  var STORE_KEY = TEST ? 'finy:test' : 'finy:v1';
   // Affichée en bas des Réglages. À incrémenter avec CACHE dans sw.js à chaque mise à jour.
-  var APP_VERSION = 31;
+  var APP_VERSION = 32;
   // Serveur de rappels en arrière-plan (dossier push-server/). Vide : les rappels ne partent qu'à
   // l'ouverture de Finy. L'adresse doit aussi figurer dans connect-src (CSP de index.html).
   var PUSH_URL = 'https://finy-push.finy-push.workers.dev';
@@ -17,6 +19,14 @@
   var BILL_CATEGORIES = ['Logement', 'Énergie', 'Assurance', 'Crédit', 'Impôts', 'Santé', 'Autre'];
   var CAT_PALETTE = ['var(--chart-3)', 'var(--chart-4)', 'var(--ink)', 'var(--muted)'];
   var SUB_PALETTE = ['var(--accent)', 'var(--chart-3)', 'var(--chart-4)', 'var(--ink)'];
+  // Fréquences des prélèvements : nombre de mois entre deux paiements, nom, suffixe du prix, libellé du montant.
+  var EVERY = { month: 1, quarter: 3, half: 6, year: 12 };
+  var FREQ_NAME = { month: 'Mensuel', quarter: 'Trimestriel', half: 'Semestriel', year: 'Annuel' };
+  var FREQ_PER = { month: '', quarter: '/trim.', half: '/6 mois', year: '/an' };
+  var FREQ_AMOUNT = { month: 'Montant par mois (€)', quarter: 'Montant par trimestre (€)', half: 'Montant tous les 6 mois (€)', year: 'Montant par an (€)' };
+  var FREQ_THEN = { month: ' par mois', quarter: ' par trimestre', half: ' tous les 6 mois', year: ' par an' };
+  // Nombre de copies automatiques gardées sur l'appareil (Réglages › Copies automatiques).
+  var BACKUP_KEEP = 8;
 
   // Configuration guidée du premier lancement : étapes, besoins et choix proposés.
   // Une étape liée à un besoin (OB_STEP_NEED) n'apparaît que si ce besoin a été choisi.
@@ -143,6 +153,8 @@
       goals: [],
       incomes: [],
       expenses: [],
+      // Enveloppe apprise à l'import d'un relevé : début du libellé → id de l'enveloppe ('' : hors enveloppe).
+      rules: {},
       history: {},
       meta: { since: null, lastExport: null, backupSnooze: null, onboarded: null, firstSteps: null },
       onboarding: null,
@@ -151,6 +163,7 @@
         homeCount: 3,
         annualMode: 'actual',
         alertDays: 5,
+        payday: 1,
         reminders: { enabled: false, daysBefore: 3, sameDay: true, background: false }
       },
       notified: {}
@@ -168,7 +181,7 @@
     out.categories = Array.isArray(data.categories) ? data.categories.filter(function (c) {
       return c && typeof c.name === 'string' && typeof c.amount === 'number';
     }).map(function (c) {
-      return { id: String(c.id || uid()), name: c.name.slice(0, 40), amount: Math.max(0, c.amount) };
+      return { id: String(c.id || uid()), name: c.name.slice(0, 40), amount: Math.max(0, c.amount), carry: c.carry === true, carryFrom: isMonthKey(c.carryFrom) ? c.carryFrom : null };
     }) : [];
     out.subs = Array.isArray(data.subs) ? data.subs.filter(function (s) {
       return s && typeof s.name === 'string' && typeof s.amount === 'number';
@@ -178,7 +191,7 @@
         name: s.name.slice(0, 60),
         amount: Math.max(0, s.amount),
         day: Math.min(31, Math.max(1, Math.round(num(s.day, 1)))),
-        frequency: s.frequency === 'year' ? 'year' : 'month',
+        frequency: Object.prototype.hasOwnProperty.call(EVERY, s.frequency) ? s.frequency : 'month',
         month: Math.min(11, Math.max(0, Math.round(num(s.month, new Date().getMonth())))),
         category: typeof s.category === 'string' && s.category ? s.category.slice(0, 30) : 'Autre',
         site: typeof s.site === 'string' ? (normalizeSite(s.site) || '') : '',
@@ -213,8 +226,14 @@
     out.expenses = Array.isArray(data.expenses) ? data.expenses.filter(function (x) {
       return x && typeof x.cat === 'string' && typeof x.amount === 'number' && x.amount > 0 && isIsoDate(x.date);
     }).map(function (x) {
-      return { id: String(x.id || uid()), cat: x.cat, amount: x.amount, date: x.date, note: typeof x.note === 'string' ? x.note.slice(0, 60) : '' };
+      // `cat` vide : dépense hors enveloppe. `ref` : ligne de relevé importée (pour ne pas l'importer deux fois).
+      return { id: String(x.id || uid()), cat: x.cat.slice(0, 40), amount: x.amount, date: x.date, note: typeof x.note === 'string' ? x.note.slice(0, 60) : '', ref: typeof x.ref === 'string' ? x.ref.slice(0, 120) : '' };
     }) : [];
+    if (data.rules && typeof data.rules === 'object' && !Array.isArray(data.rules)) {
+      Object.keys(data.rules).slice(0, 400).forEach(function (k) {
+        if (typeof data.rules[k] === 'string' && k.length <= 40) out.rules[k] = data.rules[k].slice(0, 40);
+      });
+    }
     if (data.history && typeof data.history === 'object') {
       Object.keys(data.history).forEach(function (k) {
         var h = data.history[k];
@@ -230,6 +249,7 @@
     out.settings.homeCount = st.homeCount === 5 ? 5 : 3;
     out.settings.annualMode = st.annualMode === 'smooth' ? 'smooth' : 'actual';
     out.settings.alertDays = Math.min(30, Math.max(1, Math.round(num(st.alertDays, 5))));
+    out.settings.payday = Math.min(28, Math.max(1, Math.round(num(st.payday, 1))));
     var r = st.reminders || {};
     out.settings.reminders.enabled = r.enabled === true;
     out.settings.reminders.daysBefore = Math.min(30, Math.max(1, Math.round(num(r.daysBefore, 3))));
@@ -271,7 +291,7 @@
     if (state.salary > 0) {
       var tt = totals();
       var r = function (n) { return Math.round(n * 100) / 100; };
-      state.history[monthKey(t)] = { income: r(tt.income), saved: r(state.savings + tt.goals), subs: r(tt.subs), bills: r(tt.bills), cats: r(tt.cats), spent: r(tt.spent), free: r(tt.free) };
+      state.history[curKey()] = { income: r(tt.income), saved: r(state.savings + tt.goals), subs: r(tt.subs), bills: r(tt.bills), cats: r(tt.cats), spent: r(tt.spent), free: r(tt.free) };
     }
     var oldest = monthKey(new Date(t.getFullYear() - 3, t.getMonth(), 1));
     Object.keys(state.history).forEach(function (k) { if (k < oldest) delete state.history[k]; });
@@ -342,7 +362,7 @@
   // ---------- Dates ----------
 
   function today() {
-    var d = new Date();
+    var d = TEST && TEST.now ? new Date(TEST.now) : new Date();
     return new Date(d.getFullYear(), d.getMonth(), d.getDate());
   }
 
@@ -357,35 +377,79 @@
   // Essai gratuit en cours : rien n'est prélevé avant la fin de l'essai.
   function inTrial(s) { return !!s.trialEnd && parseIso(s.trialEnd) > today(); }
 
-  // Prochain prélèvement d'un abonnement à partir d'une date (mensuel ou annuel), après l'essai gratuit.
-  function nextDate(s, from) {
-    if (s.trialEnd && parseIso(s.trialEnd) > from) from = parseIso(s.trialEnd);
-    var y = from.getFullYear();
-    if (s.frequency === 'year') {
-      var a = onDay(y, s.month, s.day);
-      return a < from ? onDay(y + 1, s.month, s.day) : a;
-    }
-    var d = onDay(y, from.getMonth(), s.day);
-    return d < from ? onDay(y, from.getMonth() + 1, s.day) : d;
+  // Mois budgétaire : du jour de paie à la veille du suivant (payé le 1er : le mois du calendrier).
+  // Il porte le nom du mois qu'il couvre le plus : payé le 28 octobre, c'est le budget de novembre ;
+  // payé le 5 novembre, c'est encore novembre. `key` (« 2026-11 ») range dépenses, revenus et historique.
+  function periodOf(d) {
+    var p = state.settings.payday;
+    var y = d.getFullYear(), m = d.getMonth() - (d.getDate() < p ? 1 : 0);
+    var start = new Date(y, m, p);
+    var end = new Date(y, m + 1, p - 1);
+    var label = new Date(y, m + (p > 15 ? 1 : 0), 1);
+    return { start: start, end: end, key: monthKey(label), label: label, days: diffDays(end, start) + 1 };
   }
 
-  // Date du prélèvement pendant ce mois, ou null (pas ce mois-ci, en pause ou encore en essai).
+  // Le mois budgétaire en cours, et celui d'une clé (« 2026-11 »).
+  function period() { return periodOf(today()); }
+
+  function curKey() { return period().key; }
+
+  function periodFor(k) {
+    var m = +k.slice(5, 7) - 1 - (state.settings.payday > 15 ? 1 : 0);
+    return periodOf(new Date(+k.slice(0, 4), m, state.settings.payday));
+  }
+
+  // Clé du mois budgétaire `n` mois avant (n > 0) ou après (n < 0) la clé `k`.
+  function shiftKey(k, n) { return monthKey(new Date(+k.slice(0, 4), +k.slice(5, 7) - 1 - n, 1)); }
+
+  function inPeriod(isoDate, p) { return isoDate >= iso(p.start) && isoDate <= iso(p.end); }
+
+  // Nom du mois budgétaire en cours : « novembre », « novembre 2026 ».
+  function periodMonth(withYear) {
+    return new Intl.DateTimeFormat('fr-FR', withYear ? { month: 'long', year: 'numeric' } : { month: 'long' }).format(period().label);
+  }
+
+  // Dernier jour du mois budgétaire : « 30 » (payé le 1er), sinon « 27 nov. ».
+  function endLabel(p) { return state.settings.payday === 1 ? String(p.end.getDate()) : shortDate.format(p.end); }
+
+  // Le mois `m` est-il un mois de prélèvement ? (`s.month` : un mois où il tombe, pour les non-mensuels.)
+  function chargeMonth(s, m) {
+    var e = EVERY[s.frequency] || 1;
+    return e === 1 || ((m - s.month) % e + e) % e === 0;
+  }
+
+  // Prochain prélèvement d'un abonnement à partir d'une date, quelle que soit sa fréquence, après l'essai gratuit.
+  function nextDate(s, from) {
+    if (s.trialEnd && parseIso(s.trialEnd) > from) from = parseIso(s.trialEnd);
+    for (var i = 0; i <= 12; i++) {
+      var y = from.getFullYear(), m = from.getMonth() + i;
+      var d = onDay(y + Math.floor(m / 12), ((m % 12) + 12) % 12, s.day);
+      if (chargeMonth(s, d.getMonth()) && d >= from) return d;
+    }
+    return onDay(from.getFullYear() + 1, from.getMonth(), s.day);
+  }
+
+  // Date du prélèvement pendant ce mois du calendrier, ou null (pas ce mois-ci, en pause ou encore en essai).
   function chargeIn(s, y, m) {
-    if (s.paused || (s.frequency === 'year' && s.month !== m)) return null;
+    if (s.paused || !chargeMonth(s, m)) return null;
     var d = onDay(y, m, s.day);
     return s.trialEnd && d < parseIso(s.trialEnd) ? null : d;
   }
 
-  // Coût compté pour le mois en cours, selon le réglage :
-  // « actual » = ce qui est vraiment prélevé ce mois-ci, « smooth » = annuels lissés sur 12 mois.
+  // Coût compté pour le mois budgétaire en cours, selon le réglage :
+  // « actual » = ce qui est vraiment prélevé pendant ce mois, « smooth » = annuels et trimestriels lissés.
   function costThisMonth(s) {
-    var t = today();
+    var p = period();
     if (s.paused) return 0;
-    if (s.frequency === 'year' && state.settings.annualMode === 'smooth') {
-      return s.trialEnd && parseIso(s.trialEnd) > onDay(t.getFullYear(), t.getMonth(), 31) ? 0 : s.amount / 12;
+    var e = EVERY[s.frequency] || 1;
+    if (e > 1 && state.settings.annualMode === 'smooth') {
+      return s.trialEnd && parseIso(s.trialEnd) > p.end ? 0 : s.amount / e;
     }
-    return chargeIn(s, t.getFullYear(), t.getMonth()) ? s.amount : 0;
+    return nextDate(s, p.start) <= p.end ? s.amount : 0;
   }
+
+  // Pas mensuel : annuel, semestriel ou trimestriel.
+  function isSpread(s) { return (EVERY[s.frequency] || 1) > 1; }
 
   function isBill(s) { return s.kind === 'bill'; }
 
@@ -393,17 +457,18 @@
   function ofKind(kind, list) { return (list || state.subs).filter(function (s) { return (kind === 'bill') === isBill(s); }); }
 
   function yearTotal(kind) {
-    return ofKind(kind).reduce(function (a, s) { return a + (s.paused ? 0 : s.frequency === 'year' ? s.amount : s.amount * 12); }, 0);
+    return ofKind(kind).reduce(function (a, s) { return a + (s.paused ? 0 : s.amount * 12 / (EVERY[s.frequency] || 1)); }, 0);
   }
 
-  // Prochain abonnement annuel qui ne tombe pas ce mois-ci (pour prévenir à l'avance).
+  // Prochain paiement annuel (ou trimestriel…) qui ne tombe pas ce mois-ci (pour prévenir à l'avance).
   function nextYearly() {
-    var t = today();
-    return upcoming().filter(function (u) { return u.sub.frequency === 'year' && u.date.getMonth() !== t.getMonth(); })[0] || null;
+    var p = period();
+    return upcoming().filter(function (u) { return isSpread(u.sub) && u.date > p.end; })[0] || null;
   }
 
   function priceLabel(s) {
-    return euro(s.amount) + (s.frequency === 'year' ? '<small class="per">/an</small>' : '');
+    var per = FREQ_PER[s.frequency] || '';
+    return euro(s.amount) + (per ? '<small class="per">' + per + '</small>' : '');
   }
 
   function iso(d) {
@@ -425,8 +490,8 @@
   // Le montant du mois est calculé sur ce qui était de côté au début du mois : un versement ne le fait pas baisser.
   // Sans échéance (`open`), c'est l'inverse : le montant par mois est choisi (ou nul) et la date de fin en découle.
   function goalPlan(g) {
-    var t = today();
-    var k = monthKey(t);
+    var k = curKey();
+    var ky = +k.slice(0, 4), km = +k.slice(5, 7) - 1;
     var paid = g.deposits.reduce(function (a, d) { return a + (d.m === k ? d.amount : 0); }, 0);
     var before = Math.max(0, g.saved - paid);
     var missing = Math.max(0, g.target - before);
@@ -434,11 +499,11 @@
     if (g.open) {
       left = g.monthly > 0 && missing > 0 ? Math.ceil(missing / g.monthly) : 0;
       monthly = Math.min(g.monthly, missing);
-      end = left ? new Date(t.getFullYear(), t.getMonth() + left, 1) : null;
+      end = left ? new Date(ky, km + left, 1) : null;
     } else {
       var y = parseInt(g.start.slice(0, 4), 10);
       var m = parseInt(g.start.slice(5, 7), 10) - 1;
-      var elapsed = (t.getFullYear() - y) * 12 + (t.getMonth() - m);
+      var elapsed = (ky - y) * 12 + (km - m);
       left = Math.max(1, g.months - Math.max(0, elapsed));
       monthly = missing > 0 ? Math.ceil(missing / left * 100) / 100 : 0;
       end = new Date(y, m + g.months, 1);
@@ -466,18 +531,41 @@
 
   // Revenus en plus du salaire (prime, remboursement…), pour le mois en cours seulement.
   function extrasThisMonth() {
-    var k = monthKey(today());
+    var k = curKey();
     return state.incomes.filter(function (i) { return i.month === k; });
   }
 
-  // Ce qui a été dépensé ce mois-ci dans une catégorie.
-  function spentIn(catId) {
-    var k = monthKey(today());
-    return state.expenses.reduce(function (a, x) { return a + (x.cat === catId && x.date.slice(0, 7) === k ? x.amount : 0); }, 0);
+  // Ce qui a été dépensé pendant un mois budgétaire (le mois en cours par défaut) dans une enveloppe.
+  // `catId` vide : les dépenses hors enveloppe.
+  function spentIn(catId, p) {
+    p = p || period();
+    var a = iso(p.start), b = iso(p.end);
+    return state.expenses.reduce(function (s, x) { return s + (x.cat === catId && x.date >= a && x.date <= b ? x.amount : 0); }, 0);
   }
 
-  // Une catégorie réserve son budget ; si on le dépasse, le dépassement est retiré aussi.
-  function catCost(c) { return Math.max(c.amount, spentIn(c.id)); }
+  // Report : ce qui n'a pas été dépensé les mois d'avant reste dans l'enveloppe (12 mois au plus,
+  // depuis le mois où le report a été activé). Un dépassement ne se reporte pas : il est déjà retiré du libre.
+  function carryIn(c) {
+    if (!c.carry || !c.carryFrom) return 0;
+    var k = curKey();
+    var bal = 0;
+    for (var n = 12; n >= 1; n--) {
+      var pk = shiftKey(k, n);
+      if (pk < c.carryFrom) continue;
+      bal = Math.max(0, c.amount + bal - spentIn(c.id, periodFor(pk)));
+    }
+    return Math.round(bal * 100) / 100;
+  }
+
+  // Ce que contient l'enveloppe ce mois-ci : son budget, plus le report.
+  function catAvail(c) { return c.amount + carryIn(c); }
+
+  // Ce qu'une enveloppe retire de ce mois-ci : son budget, ou plus si on dépasse budget et report.
+  // Le report vient des mois d'avant : il ne coûte rien à ce mois-ci.
+  function catCost(c) { return Math.max(c.amount, spentIn(c.id) - carryIn(c)); }
+
+  // Dépenses hors enveloppe du mois : retirées directement de ce qui est libre.
+  function looseSpent(p) { return spentIn('', p); }
 
   // `o` permet de simuler un autre salaire, une autre épargne ou d'autres abonnements (mode « Et si… »).
   function totals(o) {
@@ -490,46 +578,54 @@
     var bills = ofKind('bill', o.subs).reduce(cost, 0);
     var cats = state.categories.reduce(function (a, c) { return a + catCost(c); }, 0);
     var catSpent = state.categories.reduce(function (a, c) { return a + spentIn(c.id); }, 0);
+    var loose = looseSpent();
     var goals = goalsMonthly();
     var income = salary + extras;
     var rest = income - savings - goals - subs - bills;
-    var free = rest - cats;
-    // Ce qui est vraiment libre (catégories déjà réservées), réparti sur les jours du mois en cours.
-    var t = today();
-    return { income: income, extras: extras, subs: subs, bills: bills, spent: subs + bills + catSpent, cats: cats, goals: goals, rest: rest, free: free, weekly: Math.max(0, free) * 7 / daysIn(t.getFullYear(), t.getMonth()) };
+    var free = rest - cats - loose;
+    // Budget par jour : ce qui est encore libre (enveloppes réservées, dépenses hors enveloppe retirées),
+    // réparti sur les jours qui restent jusqu'à la fin du mois budgétaire, aujourd'hui compris.
+    var p = period();
+    var daysLeft = Math.max(1, diffDays(p.end, today()) + 1);
+    return { income: income, extras: extras, subs: subs, bills: bills, spent: subs + bills + catSpent + loose, cats: cats, loose: loose, goals: goals, rest: rest, free: free, daily: Math.max(0, free) / daysLeft, daysLeft: daysLeft };
   }
 
-  // Prévision de fin de mois : les catégories où l'on a dépensé suivent le rythme actuel,
-  // les autres comptent leur budget entier. Rien avant le 5 du mois (trop tôt pour un rythme).
+  // Prévision de fin de mois : les enveloppes où l'on a dépensé suivent le rythme actuel, les autres comptent
+  // leur budget entier. Les dépenses hors enveloppe, ponctuelles, comptent pour ce qu'elles sont (sans rythme).
+  // Rien avant le 5e jour du mois budgétaire.
   function forecast() {
-    var t = today();
-    var day = t.getDate(), n = daysIn(t.getFullYear(), t.getMonth());
+    var p = period();
+    var day = diffDays(today(), p.start) + 1, n = p.days;
+    var loose = looseSpent();
     if (state.salary <= 0 || !state.categories.length || day < 5) return null;
     var any = false;
     var proj = state.categories.reduce(function (a, c) {
       var spent = spentIn(c.id);
       if (spent > 0) any = true;
-      return a + (spent > 0 ? Math.max(spent, spent / day * n) : c.amount);
-    }, 0);
+      return a + (spent > 0 ? Math.max(0, Math.max(spent, spent / day * n) - carryIn(c)) : c.amount);
+    }, 0) + loose;
     if (!any) return null;
     var budget = state.categories.reduce(function (a, c) { return a + c.amount; }, 0);
-    // Catégorie qui part le plus vite au-dessus de son budget, pour l'expliquer.
+    // Enveloppe qui part le plus vite au-dessus de ce qu'elle contient, pour l'expliquer.
     var worst = null;
     state.categories.forEach(function (c) {
       var spent = spentIn(c.id);
-      var p = spent / day * n;
-      if (spent > 0 && p > c.amount && (!worst || p - c.amount > worst.over)) worst = { name: c.name, over: p - c.amount, proj: p };
+      var pr = spent / day * n, avail = catAvail(c);
+      if (spent > 0 && pr > avail && (!worst || pr - avail > worst.over)) worst = { name: c.name, over: pr - avail, proj: pr };
     });
-    return { end: totals().rest - proj, proj: proj, budget: budget, lastDay: n, worst: worst };
+    return { end: totals().rest - proj, proj: proj, budget: budget, lastDay: endLabel(p), worst: worst };
   }
 
+  // « le 30. » ou « le 27 nov. » (la date abrégée finit déjà par un point).
+  function onLastDay(f) { return 'le ' + f.lastDay + (/\.$/.test(f.lastDay) ? '' : '.'); }
+
   function forecastLine(f) {
-    return 'À ce rythme, il te restera environ <span class="strong"' + (f.end < 0 ? ' style="color:var(--danger)"' : '') + '>' + euro(Math.round(f.end)) + '</span> le ' + f.lastDay + '.' +
+    return 'À ce rythme, il te restera environ <span class="strong"' + (f.end < 0 ? ' style="color:var(--danger)"' : '') + '>' + euro(Math.round(f.end)) + '</span> ' + onLastDay(f) +
       (f.worst ? ' ' + esc(f.worst.name) + ' file vers ' + euro(Math.round(f.worst.proj)) + '.' : '');
   }
 
   function yearlyCount(kind) {
-    return (kind ? ofKind(kind) : state.subs).filter(function (s) { return s.frequency === 'year' && !s.paused; }).length;
+    return (kind ? ofKind(kind) : state.subs).filter(function (s) { return isSpread(s) && !s.paused; }).length;
   }
 
   // Les abonnements en pause n'ont pas de date : ils passent en fin de liste, seulement si on les demande.
@@ -555,7 +651,7 @@
     var s = u.sub;
     var when = s.paused ? 'En pause' : inTrial(s) ? 'Essai jusqu\'au ' + shortDate.format(parseIso(s.trialEnd)) : shortDate.format(u.date);
     var extra = (showCategory ? esc(s.category) + ' · ' : '') + when +
-      (!s.paused && s.frequency === 'year' && state.settings.annualMode === 'smooth' ? ' · ≈ ' + euro(s.amount / 12) + '/mois' : '');
+      (!s.paused && isSpread(s) && state.settings.annualMode === 'smooth' ? ' · ≈ ' + euro(s.amount / EVERY[s.frequency]) + '/mois' : '');
     return '<button type="button" class="row tall' + (s.paused ? ' paused' : '') + '" data-action="edit-sub" data-id="' + esc(s.id) + '">' +
       subTile(s) +
       '<span class="row-main"><span class="row-title">' + esc(s.name) + '</span>' + metaLine(u.diff, extra) + '</span>' +
@@ -668,9 +764,11 @@
     } else {
       // Le montant mis en avant est ce qui est vraiment libre : catégories comprises.
       var f = forecast();
-      html += '<section class="hero a-hero home-hero" aria-label="Ce qu\'il te reste"><p class="label">Il te reste ce mois-ci</p>' + hero(t.free, 'free') +
-        '<div class="pills"><p class="pill-info"><span class="strong">' + euro(t.weekly) + '</span><span class="muted">cette semaine</span></p>' +
-        (f ? '<p class="pill-info" title="' + esc(forecastLine(f).replace(/<[^>]+>/g, '')) + '">' + icon('trend', 'pill-ic') + '<span class="strong"' + (f.end < 0 ? ' style="color:var(--danger)"' : '') + '>≈ ' + euro(Math.round(f.end)) + '</span><span class="muted">le ' + f.lastDay + '</span></p>' : '') +
+      var pe = period();
+      html += '<section class="hero a-hero home-hero" aria-label="Ce qu\'il te reste"><p class="label">Il te reste ce mois-ci' +
+        (state.settings.payday > 1 ? '<span class="muted" style="font-weight:400"> · jusqu\'au ' + esc(shortDate.format(pe.end)) + '</span>' : '') + '</p>' + hero(t.free, 'free') +
+        '<div class="pills"><p class="pill-info" title="' + esc('Ce qui est libre, réparti sur les ' + t.daysLeft + ' jours qui restent') + '"><span class="strong">' + euro(t.daily) + '</span><span class="muted">par jour' + (t.daysLeft > 1 ? ' · ' + t.daysLeft + ' j' : ' · dernier jour') + '</span></p>' +
+        (f ? '<p class="pill-info" title="' + esc(forecastLine(f).replace(/<[^>]+>/g, '')) + '">' + icon('trend', 'pill-ic') + '<span class="strong"' + (f.end < 0 ? ' style="color:var(--danger)"' : '') + '>≈ ' + euro(Math.round(f.end)) + '</span><span class="muted">le ' + esc(f.lastDay) + '</span></p>' : '') +
         '</div>' + (f && f.worst ? '<p class="caption">' + esc(f.worst.name) + ' file vers ' + euro(Math.round(f.worst.proj)) + '.</p>' : '') + '</section>';
     }
     html += backupNotice() ? '<div class="home-notice">' + backupNotice() + '</div>' : '';
@@ -711,8 +809,9 @@
         more: '<button type="button" class="row row-sub-link row-link" data-action="' + (ofKind('bill').length ? 'go-abos" data-value="bill">Toutes les charges fixes' : 'add-bill">Ajouter une charge fixe') + icon('right') + '</button>' },
       { id: 'abos', name: 'Abonnements', color: 'var(--chart-2)', value: t.subs, items: subItems('sub'),
         more: '<button type="button" class="row row-sub-link row-link" data-action="go-abos" data-value="sub">Tous les abonnements' + icon('right') + '</button>' },
-      { id: 'depenses', name: 'Dépenses courantes', color: 'var(--chart-3)', value: t.cats,
-        items: state.categories.map(function (c) { return { name: c.name, value: catCost(c), act: 'edit-cat', id: c.id }; }),
+      { id: 'depenses', name: 'Dépenses courantes', color: 'var(--chart-3)', value: t.cats + t.loose,
+        items: state.categories.map(function (c) { return { name: c.name, value: catCost(c), act: 'edit-cat', id: c.id }; })
+          .concat(t.loose > 0 ? [{ name: 'Hors enveloppe', value: t.loose, act: 'edit-loose', id: '' }] : []),
         more: '<button type="button" class="row row-sub-link row-link" data-action="add-cat">Ajouter une enveloppe' + icon('plus') + '</button>' },
       { id: 'libre', name: 'Libre', color: 'var(--ink)', value: t.free, items: [] }
     ];
@@ -772,7 +871,7 @@
       '</section>';
   }
 
-  // Chiffres clés (ordinateur) : semaine, fin de mois, part mise de côté.
+  // Chiffres clés (ordinateur) : budget par jour, fin de mois, part mise de côté.
   function homeStats(t) {
     var f = forecast();
     var rate = t.income > 0 ? Math.round((state.savings + t.goals) / t.income * 100) : 0;
@@ -781,8 +880,8 @@
         '<span class="stat-val">' + value + '</span><span class="caption">' + label + '</span></div>';
     };
     return '<section class="home-stats" aria-label="Chiffres clés">' +
-      tile('calendar', 'var(--accent)', euro(t.weekly), 'pour te faire plaisir cette semaine') +
-      (f ? tile('trend', 'var(--chart-3)', '≈ ' + euro(Math.round(f.end)), 'prévus le ' + f.lastDay + ' au soir')
+      tile('calendar', 'var(--accent)', euro(t.daily), 'par jour pour te faire plaisir, jusqu\'au ' + esc(endLabel(period()))) +
+      (f ? tile('trend', 'var(--chart-3)', '≈ ' + euro(Math.round(f.end)), 'prévus le ' + esc(f.lastDay) + ' au soir')
         : tile('trend', 'var(--chart-3)', euro(t.income), 'de revenus ce mois-ci')) +
       tile('piggy', 'var(--chart-4)', rate + ' %', 'de tes revenus mis de côté') + '</section>';
   }
@@ -793,23 +892,38 @@
     var planned = cats.reduce(function (a, c) { return a + c.amount; }, 0);
     var rows = cats.map(function (c, i) {
       var spent = spentIn(c.id);
-      var over = spent > c.amount;
-      var pct = c.amount > 0 ? Math.min(1, spent / c.amount) : (spent > 0 ? 1 : 0);
-      var meta = over ? '<span class="soon">Dépassé de ' + euro(spent - c.amount) + '</span>'
-        : spent > 0 ? '<span>Reste ' + euro(c.amount - spent) + '</span>' : '<span>Rien de dépensé ce mois-ci</span>';
+      var carry = carryIn(c), avail = c.amount + carry;
+      var over = spent > avail;
+      var pct = avail > 0 ? Math.min(1, spent / avail) : (spent > 0 ? 1 : 0);
+      // Avec un report, montants sans « ,00 » pour que la ligne tienne dans une carte.
+      var sh = function (n) { return carry > 0 ? euro(n).replace(/,00(?=\s*€)/, '') : euro(n); };
+      var extra = carry > 0 ? ' · +' + sh(carry) + ' reportés' : '';
+      var meta = over ? '<span class="soon">Dépassé de ' + euro(spent - avail) + '</span>'
+        : spent > 0 ? '<span>Reste ' + sh(avail - spent) + extra + '</span>' : '<span>' + (carry > 0 ? sh(avail) + ' dont ' + sh(carry) + ' reportés' : 'Rien de dépensé ce mois-ci') + '</span>';
       return '<button type="button" class="row tall goal env" data-action="edit-cat" data-id="' + esc(c.id) + '">' +
         '<span class="env-ring" style="--p:' + (pct * 100).toFixed(1) + ';--c:' + (over ? 'var(--warning)' : 'var(--accent)') + '" aria-hidden="true"></span>' +
         '<span class="row-main"><span class="row-title">' + esc(c.name) + '</span>' +
         '<span class="goal-bar' + (over ? ' over' : '') + '" aria-hidden="true"><span style="width:' + (pct * 100).toFixed(1) + '%"></span></span>' +
         '<span class="row-meta">' + meta + '</span></span>' +
-        '<span class="row-amount">' + euro(spent) + '<small class="per"> / ' + euro(c.amount) + '</small></span></button>';
+        '<span class="row-amount">' + euro(spent) + '<small class="per"> / ' + euro(avail) + '</small></span></button>';
     }).join('');
+    // Les dépenses hors enveloppe : une ligne à part, retirée directement de ce qui est libre.
+    var loose = looseSpent();
+    var looseCount = state.expenses.filter(function (x) { return x.cat === '' && inPeriod(x.date, period()); }).length;
+    if (loose > 0) {
+      rows += '<button type="button" class="row tall env" data-action="edit-loose">' +
+        '<span class="env-ring" style="--p:0;--c:var(--muted)" aria-hidden="true"></span>' +
+        '<span class="row-main"><span class="row-title">Hors enveloppe</span><span class="row-meta"><span>' + looseCount + ' dépense' + (looseCount > 1 ? 's' : '') + ', retirée' + (looseCount > 1 ? 's' : '') + ' du libre</span></span></span>' +
+        '<span class="row-amount">' + euro(loose) + '</span></button>';
+    }
+    var actions = '<div class="env-actions"><button type="button" class="link-btn" data-action="add-exp">' + icon('plus') + 'Ajouter une dépense</button>' +
+      importButton('link-btn', 'expenses') +
+      '<button type="button" class="link-btn" style="color:var(--muted)" data-action="add-cat">Nouvelle enveloppe</button></div>';
     return '<section class="section home-env"><div class="section-head"><h2 class="heading">Mes enveloppes</h2>' +
       (cats.length ? '<span class="label">' + euro(planned) + ' prévus</span>' : '') + '</div>' +
-      (cats.length ? '<div class="group env-list">' + rows + '</div>' +
-        '<div class="env-actions"><button type="button" class="link-btn" data-action="add-exp">' + icon('plus') + 'Ajouter une dépense</button>' +
-        '<button type="button" class="link-btn" style="color:var(--muted)" data-action="add-cat">Nouvelle enveloppe</button></div>'
-        : '<div class="group"><div class="empty"><span>Aucune enveloppe pour l\'instant.</span><span class="caption">Réserve une part de ton salaire pour l\'alimentation, l\'essence, les sorties…</span>' +
+      (cats.length ? '<div class="group env-list">' + rows + '</div>' + actions
+        : (loose > 0 ? '<div class="group env-list">' + rows + '</div>' : '') +
+          '<div class="group"><div class="empty"><span>Aucune enveloppe pour l\'instant.</span><span class="caption">Réserve une part de ton salaire pour l\'alimentation, l\'essence, les sorties…</span>' +
           '<button type="button" class="link-btn" data-action="add-cat">Créer une enveloppe</button></div></div>') +
       '</section>';
   }
@@ -833,12 +947,12 @@
 
   // Les mois enregistrés parmi les `count` derniers, du plus ancien au plus récent.
   function historyMonths(count) {
-    var t = today();
+    var cur = curKey();
     var months = [];
     for (var i = count - 1; i >= 0; i--) {
-      var d = new Date(t.getFullYear(), t.getMonth() - i, 1);
-      var h = state.history[monthKey(d)];
-      if (h) months.push({ d: d, h: h, k: monthKey(d), now: i === 0 });
+      var k = shiftKey(cur, i);
+      var h = state.history[k];
+      if (h) months.push({ d: parseIso(k + '-01'), h: h, k: k, now: i === 0 });
     }
     return months;
   }
@@ -855,10 +969,10 @@
     var dense = months.length > 8;
     var short = new Intl.DateTimeFormat('fr-FR', { month: dense ? 'narrow' : 'short' });
     var selD = parseIso(sel + '-01');
-    var prevH = state.history[monthKey(new Date(selD.getFullYear(), selD.getMonth() - 1, 1))];
+    var prevH = state.history[shiftKey(sel, 1)];
     var cur = state.history[sel][metric] || 0;
     var delta = prevH ? cur - (prevH[metric] || 0) : null;
-    var isNow = sel === monthKey(today());
+    var isNow = sel === curKey();
     return '<div class="bars" role="group" aria-label="' + esc(name + ' mois par mois') + '">' +
       months.map(function (x) {
         var v = x.h[metric] || 0;
@@ -878,12 +992,13 @@
     var d = parseIso(k + '-01');
     var extras = state.incomes.filter(function (i) { return i.month === k; });
     var byCat = {};
-    state.expenses.forEach(function (x) { if (x.date.slice(0, 7) === k) byCat[x.cat] = (byCat[x.cat] || 0) + x.amount; });
+    var pk = periodFor(k);
+    state.expenses.forEach(function (x) { if (inPeriod(x.date, pk)) byCat[x.cat] = (byCat[x.cat] || 0) + x.amount; });
     var catRows = state.categories.map(function (c, i) {
       return byCat[c.id] ? calcRow(esc(c.name) + ' (dépensé)', euro(byCat[c.id]), CAT_PALETTE[i % CAT_PALETTE.length]) : '';
-    }).join('');
+    }).join('') + (byCat[''] ? calcRow('Hors enveloppe', '− ' + euro(byCat['']), 'var(--muted)') : '');
     return '<div class="section-head"><h3 class="heading">' + cap(monthName.format(d)) + '</h3>' +
-      (k === monthKey(today()) ? '<span class="label">En cours</span>' : '') + '</div>' +
+      (k === curKey() ? '<span class="label">En cours</span>' : state.settings.payday > 1 ? '<span class="label" style="font-weight:400">' + esc(shortDate.format(pk.start) + ' – ' + shortDate.format(pk.end)) + '</span>' : '') + '</div>' +
       '<div class="group">' +
       calcRow('Revenus', euro(h.income), 'var(--ink)') +
       extras.map(function (i) { return calcRow('dont ' + esc(i.name), '+ ' + euro(i.amount), 'var(--ink)'); }).join('') +
@@ -929,9 +1044,9 @@
 
     var smooth = state.settings.annualMode === 'smooth';
     var yc = yearlyCount(ui.abosKind);
-    var smoothPart = mine.filter(function (s) { return s.frequency === 'year' && !s.paused; }).reduce(function (a, s) { return a + s.amount / 12; }, 0);
+    var smoothPart = mine.filter(function (s) { return isSpread(s) && !s.paused; }).reduce(function (a, s) { return a + s.amount / EVERY[s.frequency]; }, 0);
     var pausedCount = mine.filter(function (s) { return s.paused; }).length;
-    var monthWord = new Intl.DateTimeFormat('fr-FR', { month: 'long' }).format(today());
+    var monthWord = periodMonth();
     var noun = bill ? ' charge' : ' abonnement';
     html += '<section class="hero a-hero" aria-label="Total">' +
       '<div class="segmented kind-switch" role="radiogroup" aria-label="Afficher">' +
@@ -940,7 +1055,7 @@
       (yc ? '<p class="label">' + (smooth ? 'Par mois, annuels lissés' : 'Prélevé en ' + monthWord) + '</p>' : '') +
       '<p class="amount-big"><span data-count="abos-' + ui.abosKind + '" data-kind="big" data-value="' + amount + '">' + euro(amount) + '</span><small>/mois</small></p>' +
       '<p class="label" style="font-weight:400">' + euro(yearTotal(ui.abosKind)) + ' sur un an · ' + mine.length + noun + (mine.length > 1 ? 's' : '') +
-      (yc && smooth ? ', dont ' + euro(smoothPart) + ' pour ' + yc + ' annuel' + (yc > 1 ? 's' : '') : '') +
+      (yc && smooth ? ', dont ' + euro(smoothPart) + ' pour ' + yc + ' non mensuel' + (yc > 1 ? 's' : '') : '') +
       (pausedCount ? ' · ' + pausedCount + ' en pause' : '') + '</p>';
     if (yc) {
       var nx = nextYearly();
@@ -990,11 +1105,12 @@
     return html;
   }
 
-  // Relevé bancaire (CSV ou PDF) ou facture (PDF).
-  function importButton(cls) {
+  // Relevé bancaire (CSV ou PDF) ou facture (PDF). `mode` 'expenses' : on en tire les dépenses du mois.
+  function importButton(cls, mode) {
     var style = cls === 'link-btn' ? 'display:inline-flex;align-items:center;gap:6px;cursor:pointer' : 'cursor:pointer';
-    return '<label class="' + cls + '" style="' + style + '">' + icon('upload') + 'Importer un relevé ou une facture' +
-      '<input type="file" accept=".csv,text/csv,application/pdf,.pdf" class="sr-only" data-input="statement"></label>';
+    var exp = mode === 'expenses';
+    return '<label class="' + cls + '" style="' + style + '">' + icon('upload') + (exp ? 'Importer un relevé' : 'Importer un relevé ou une facture') +
+      '<input type="file" accept=".csv,text/csv,application/pdf,.pdf" class="sr-only" data-input="' + (exp ? 'statement-exp' : 'statement') + '"></label>';
   }
 
   function fillAbosList() {
@@ -1145,8 +1261,9 @@
       (t.bills > 0 ? calcRow('Charges fixes', '− ' + euro(t.bills), 'var(--chart-5)') : '') +
       calcRow(yearlyCount('sub') ? (state.settings.annualMode === 'smooth' ? 'Abonnements (annuels lissés)' : 'Abonnements (ce mois-ci)') : 'Abonnements', '− ' + euro(t.subs), 'var(--chart-2)') +
       (t.cats > 0 ? calcRow('Catégories', '− ' + euro(t.cats), 'var(--chart-3)') : '') +
+      (t.loose > 0 ? calcRow('Hors enveloppe', '− ' + euro(t.loose), 'var(--muted)') : '') +
       '<div class="row" style="min-height:60px"><span class="row-main"><span class="strong">Il te reste</span></span><span class="row-amount" style="font-size:20px;line-height:26px;font-weight:700' + (t.free < 0 ? ';color:var(--danger)' : '') + '">' + euro(t.free) + '</span></div>' +
-      '<div class="row"><span class="row-main"><span class="muted">Pour te faire plaisir cette semaine</span></span><span class="row-amount">' + euro(t.weekly) + '</span></div>';
+      '<div class="row"><span class="row-main"><span class="muted">Par jour, jusqu\'au ' + esc(endLabel(period())) + '</span></span><span class="row-amount">' + euro(t.daily) + '</span></div>';
     document.getElementById('sv-alert').hidden = !(state.salary > 0 && t.free < 0);
     fillGoals();
   }
@@ -1208,7 +1325,7 @@
     openSheet(isNew ? 'Nouvel objectif' : 'Modifier l\'objectif', body, isNew ? 'Créer l\'objectif' : 'Enregistrer', function (data) {
       var r = readGoalForm(data);
       if (typeof r === 'string') return r;
-      var item = { id: isNew ? uid() : id, name: r.name, target: r.target, saved: r.saved, months: r.months, start: monthKey(today()), open: r.open, monthly: r.monthly, deposits: isNew ? [] : g.deposits };
+      var item = { id: isNew ? uid() : id, name: r.name, target: r.target, saved: r.saved, months: r.months, start: curKey(), open: r.open, monthly: r.monthly, deposits: isNew ? [] : g.deposits };
       if (isNew) state.goals.push(item);
       else state.goals = state.goals.map(function (x) { return x.id === id ? item : x; });
       toast(isNew ? 'Objectif créé' : 'Objectif modifié');
@@ -1229,7 +1346,7 @@
       var n = parseAmount(data.amount);
       if (n === null || n <= 0) return 'Indique un montant, par exemple 50.';
       g.saved = Math.round((g.saved + n) * 100) / 100;
-      g.deposits.push({ m: monthKey(today()), amount: n });
+      g.deposits.push({ m: curKey(), amount: n });
       if (g.deposits.length > 120) g.deposits = g.deposits.slice(-120);
       toast(g.saved >= g.target ? 'Objectif atteint, bravo !' : 'Versement ajouté');
     });
@@ -1240,14 +1357,11 @@
   // Le montant se tape au pavé numérique intégré (ou au clavier) : pas de champ à toucher, pas de clavier système.
   var qe = null;
 
+  // `catId` : l'enveloppe choisie d'avance ('' : hors enveloppe). Sinon, celle de la dernière dépense.
   function editExpense(catId) {
-    if (!state.categories.length) {
-      toast('Crée d\'abord une enveloppe, par exemple Alimentation');
-      return editCat(null);
-    }
-    var last = catId || (state.expenses.length ? state.expenses[state.expenses.length - 1].cat : null);
-    if (!state.categories.some(function (c) { return c.id === last; })) last = state.categories[0].id;
-    qe = { kind: 'exp', s: '', cat: last, date: iso(today()), note: '', opener: document.activeElement };
+    var last = catId != null ? catId : (state.expenses.length ? state.expenses[state.expenses.length - 1].cat : null);
+    if (last !== '' && !state.categories.some(function (c) { return c.id === last; })) last = state.categories.length ? state.categories[0].id : '';
+    qe = { kind: 'exp', s: '', cat: last, date: iso(today()), note: '', opener: document.activeElement, quickFor: null };
 
     var el = document.getElementById('quick');
     el.innerHTML = '<div class="qe-panel">' +
@@ -1256,11 +1370,13 @@
       '<h2 class="qe-title" id="quick-title">Nouvelle dépense</h2>' +
       '<label class="qe-date"><span id="qe-date-label">Aujourd\'hui</span>' + icon('down') +
       '<input type="date" data-input="qe-date" value="' + qe.date + '" max="' + qe.date + '" aria-label="Date de la dépense"></label></header>' +
-      '<div class="qe-amount-wrap"><p class="qe-amount" id="qe-amount" aria-live="polite"></p><p class="qe-hint" id="qe-hint"></p></div>' +
+      '<div class="qe-amount-wrap"><p class="qe-amount" id="qe-amount" aria-live="polite"></p><p class="qe-hint" id="qe-hint"></p>' +
+      '<div class="qe-quick" id="qe-quick" role="group" aria-label="Montants fréquents"></div></div>' +
       '<div class="qe-cats chips" role="radiogroup" aria-label="Enveloppe">' + state.categories.map(function (c, i) {
         return '<button type="button" class="chip qe-cat" role="radio" data-action="qe-cat" data-id="' + esc(c.id) + '">' +
           '<span class="dot sm" style="--c:' + CAT_PALETTE[i % CAT_PALETTE.length] + '" aria-hidden="true"></span>' + esc(c.name) + '</button>';
-      }).join('') + '</div>' +
+      }).join('') +
+      '<button type="button" class="chip qe-cat" role="radio" data-action="qe-cat" data-id=""><span class="dot sm" style="--c:var(--muted)" aria-hidden="true"></span>Hors enveloppe</button></div>' +
       '<label class="qe-note"><span class="sr-only">Note</span><input type="text" maxlength="60" autocomplete="off" placeholder="Ajouter une note (courses, plein…)" data-input="qe-note"></label>' +
       '<button type="button" class="btn btn-primary btn-block qe-submit" data-action="qe-submit" disabled>Ajouter</button>' +
       '<div class="qe-pad">' + qeKeys() + '</div></div>';
@@ -1277,7 +1393,7 @@
       '<header class="qe-head">' +
       '<button type="button" class="icon-btn" data-action="qe-close" aria-label="Fermer">' + icon('close') + '</button>' +
       '<h2 class="qe-title" id="quick-title">Nouveau revenu</h2>' +
-      '<span class="qe-date qe-month">' + cap(new Intl.DateTimeFormat('fr-FR', { month: 'long' }).format(today())) + '</span></header>' +
+      '<span class="qe-date qe-month">' + cap(periodMonth()) + '</span></header>' +
       '<div class="qe-amount-wrap"><p class="qe-amount" id="qe-amount" aria-live="polite"></p><p class="qe-hint" id="qe-hint"></p></div>' +
       '<div class="qe-cats chips" role="radiogroup" aria-label="Type de revenu">' + INCOME_NAMES.map(function (n) {
         return '<button type="button" class="chip qe-cat" role="radio" data-action="qe-name" data-value="' + n + '">' + n + '</button>';
@@ -1346,20 +1462,32 @@
     if (qe.kind === 'inc') {
       var free = totals().free;
       hint.className = 'qe-hint';
-      hint.textContent = v <= 0 ? 'S\'ajoute à ton salaire pour ' + monthName.format(today()) + ' seulement'
+      hint.textContent = v <= 0 ? 'S\'ajoute à ton salaire pour ' + periodMonth(true) + ' seulement'
         : 'Il te restera ' + euro(free + v) + ' ce mois-ci';
       el.querySelectorAll('.qe-cat').forEach(function (b) { b.setAttribute('aria-checked', String(b.dataset.value === qe.note.trim())); });
       return;
     }
     var c = state.categories.filter(function (x) { return x.id === qe.cat; })[0];
-    if (c && qe.date.slice(0, 7) === monthKey(today())) {
-      var after = c.amount - spentIn(c.id) - v;
+    var now = inPeriod(qe.date, period());
+    if (c && now) {
+      var avail = catAvail(c) - spentIn(c.id);
+      var after = avail - v;
       hint.className = 'qe-hint' + (after < 0 ? ' over' : '');
-      hint.textContent = v <= 0 ? 'Reste ' + euro(c.amount - spentIn(c.id)) + ' en ' + c.name
+      hint.textContent = v <= 0 ? 'Reste ' + euro(avail) + ' en ' + c.name
         : after >= 0 ? 'Il restera ' + euro(after) + ' en ' + c.name : c.name + ' dépassé de ' + euro(-after);
+    } else if (!c && now) {
+      var freeAfter = totals().free - v;
+      hint.className = 'qe-hint' + (freeAfter < 0 ? ' over' : '');
+      hint.textContent = v <= 0 ? 'Hors enveloppe : retiré de ce qui est libre' : 'Il te restera ' + euro(freeAfter) + ' de libre';
     } else {
       hint.className = 'qe-hint';
-      hint.textContent = c ? 'Dans ' + c.name : '';
+      hint.textContent = c ? 'Dans ' + c.name : 'Hors enveloppe';
+    }
+    if (qe.quickFor !== qe.cat) {
+      qe.quickFor = qe.cat;
+      document.getElementById('qe-quick').innerHTML = frequentAmounts(qe.cat).map(function (n) {
+        return '<button type="button" class="chip" data-action="qe-amount" data-value="' + n + '">' + euro(n).replace(/,00(?=\s*€)/, '') + '</button>';
+      }).join('');
     }
 
     el.querySelectorAll('.qe-cat').forEach(function (b) { b.setAttribute('aria-checked', String(b.dataset.id === qe.cat)); });
@@ -1367,6 +1495,25 @@
     var d = parseIso(qe.date);
     var diff = diffDays(t, d);
     document.getElementById('qe-date-label').textContent = diff === 0 ? 'Aujourd\'hui' : diff === 1 ? 'Hier' : shortDate.format(d);
+  }
+
+  // Les montants qui reviennent le plus dans une enveloppe ces 4 derniers mois (au moins deux fois), 3 au plus.
+  function frequentAmounts(catId) {
+    var t = today();
+    var since = iso(new Date(t.getFullYear(), t.getMonth() - 4, t.getDate()));
+    var count = {};
+    state.expenses.forEach(function (x) {
+      if (x.cat === catId && x.date >= since) count[x.amount] = (count[x.amount] || 0) + 1;
+    });
+    return Object.keys(count).filter(function (k) { return count[k] >= 2; })
+      .sort(function (a, b) { return count[b] - count[a] || a - b; }).slice(0, 3).map(Number);
+  }
+
+  // Un montant fréquent touché : il remplace ce qui a été tapé.
+  function qeAmount(n) {
+    if (!qe || !(n > 0)) return;
+    qe.s = plain(n).replace(/,00$/, '');
+    qeUpdate();
   }
 
   function qeKey(k) {
@@ -1399,7 +1546,7 @@
     var v = qeValue();
     if (!(v > 0)) return;
     if (qe.kind === 'inc') {
-      state.incomes.push({ id: uid(), name: qe.note.trim().slice(0, 40) || 'Revenu', amount: v, month: monthKey(today()) });
+      state.incomes.push({ id: uid(), name: qe.note.trim().slice(0, 40) || 'Revenu', amount: v, month: curKey() });
       qeClose();
       save();
       render();
@@ -1408,11 +1555,13 @@
     var date = isIsoDate(qe.date) && qe.date <= iso(today()) ? qe.date : iso(today());
     state.expenses.push({ id: uid(), cat: qe.cat, amount: v, date: date, note: qe.note.trim().slice(0, 60) });
     var c = state.categories.filter(function (x) { return x.id === qe.cat; })[0];
-    var left = c ? c.amount - spentIn(c.id) : 0;
+    var left = c ? catAvail(c) - spentIn(c.id) : 0;
+    var now = inPeriod(date, period());
     qeClose();
     save();
     render();
-    toast(c && date.slice(0, 7) === monthKey(today()) ? (left >= 0 ? euro(v) + ' ajouté · reste ' + euro(left) + ' en ' + c.name : c.name + ' : budget dépassé') : 'Dépense ajoutée');
+    toast(c && now ? (left >= 0 ? euro(v) + ' ajouté · reste ' + euro(left) + ' en ' + c.name : c.name + ' : budget dépassé')
+      : !c && now ? euro(v) + ' ajouté · il te reste ' + euro(totals().free) : 'Dépense ajoutée');
   }
 
   // Clavier physique (ordinateur) quand la saisie rapide est ouverte.
@@ -1433,7 +1582,7 @@
   function editIncome(id) {
     var inc = state.incomes.filter(function (x) { return x.id === id; })[0];
     var isNew = !inc;
-    var body = '<p class="caption">Une prime, un remboursement, un petit boulot… Il s\'ajoute à ton salaire pour ' + monthName.format(today()) + ' seulement.</p>' +
+    var body = '<p class="caption">Une prime, un remboursement, un petit boulot… Il s\'ajoute à ton salaire pour ' + periodMonth(true) + ' seulement.</p>' +
       '<label class="field"><span>Nom</span><input class="input" name="name" type="text" maxlength="40" autocomplete="off" placeholder="Prime, remboursement…" value="' + esc(inc ? inc.name : '') + '"></label>' +
       amountField('amount', 'Montant (€)', inc ? inc.amount : 0);
     var del = isNew ? '' : '<button type="button" class="btn btn-danger btn-block" data-action="delete-income" data-id="' + esc(id) + '">Supprimer ce revenu</button>';
@@ -1442,7 +1591,7 @@
       var n = parseAmount(data.amount);
       if (!name) return 'Donne un nom à ce revenu.';
       if (n === null || n <= 0) return 'Indique un montant, par exemple 200.';
-      var item = { id: isNew ? uid() : id, name: name, amount: n, month: isNew ? monthKey(today()) : inc.month };
+      var item = { id: isNew ? uid() : id, name: name, amount: n, month: isNew ? curKey() : inc.month };
       if (isNew) state.incomes.push(item);
       else state.incomes = state.incomes.map(function (x) { return x.id === id ? item : x; });
       toast(isNew ? 'Revenu ajouté' : 'Revenu modifié');
@@ -1498,7 +1647,7 @@
 
   function viewBilan() {
     var t = totals();
-    var html = '<header class="topbar a-top"><h1 class="title">Bilan</h1><span class="label">' + cap(monthName.format(today())) + '</span></header>';
+    var html = '<header class="topbar a-top"><h1 class="title">Bilan</h1><span class="label">' + cap(periodMonth(true)) + '</span></header>';
     if (state.salary <= 0) {
       return html + '<section class="section a-hero"><div class="group"><div class="empty"><span>Indique ton salaire pour voir ton bilan.</span>' +
         '<button type="button" class="link-btn" data-action="edit-salary">Indiquer mon salaire</button></div></div></section>';
@@ -1512,7 +1661,7 @@
       '<p class="caption">de tes revenus : ' + euro(saved) + ' sur ' + euro(t.income) + ', épargne et objectifs compris.</p>';
 
     // Le mois en chiffres, comparé au mois d'avant quand il est enregistré.
-    var prevKey = monthKey(new Date(today().getFullYear(), today().getMonth() - 1, 1));
+    var prevKey = shiftKey(curKey(), 1);
     var prev = state.history[prevKey];
     var stat = function (label, value, key, goodUp) {
       // « spent » vaut -1 pour les mois enregistrés avant son ajout.
@@ -1523,7 +1672,7 @@
     };
     html += '<div class="stats">' + stat('Revenus', t.income, 'income', true) + stat('Dépensé', t.spent, 'spent', false) +
       stat('Mis de côté', saved, 'saved', true) + stat('Libre', t.free, 'free', true) + '</div>' +
-      (prev ? '<p class="caption">Écarts comparés à ' + new Intl.DateTimeFormat('fr-FR', { month: 'long' }).format(new Date(today().getFullYear(), today().getMonth() - 1, 1)) + '.</p>' : '');
+      (prev ? '<p class="caption">Écarts comparés à ' + new Intl.DateTimeFormat('fr-FR', { month: 'long' }).format(parseIso(prevKey + '-01')) + '.</p>' : '');
     var f = forecast();
     if (f) html += '<p class="forecast-box">' + forecastLine(f) + '</p>';
     html += '</section>';
@@ -1535,14 +1684,15 @@
         return '<button type="button" class="chip" data-action="bilan-metric" data-value="' + k + '" aria-pressed="' + (k === ui.bilanMetric) + '">' + METRICS[k] + '</button>';
       }).join('') + '</div>' +
       '<div class="group hist">' + (chart || '<div class="empty"><span>Finy garde une photo de chaque mois quand tu l\'ouvres.</span><span class="caption">Le graphique apparaîtra dès le mois prochain.</span></div>') + '</div>' +
-      (chart ? '<p class="caption">Touche un mois pour voir son détail.</p><div class="month-detail" id="month-detail">' + monthDetail(state.history[ui.bilanMonth] ? ui.bilanMonth : monthKey(today())) + '</div>' : '') + '</section>';
+      (chart ? '<p class="caption">Touche un mois pour voir son détail.</p><div class="month-detail" id="month-detail">' + monthDetail(state.history[ui.bilanMonth] ? ui.bilanMonth : curKey()) + '</div>' : '') + '</section>';
 
     // Où part l'argent : chaque abonnement, charge et catégorie du mois, du plus cher au moins cher.
     var items = state.subs.filter(function (s) { return costThisMonth(s) > 0; }).map(function (s) {
       return { name: s.name, value: costThisMonth(s), kind: isBill(s) ? 'Charge fixe' : 'Abonnement', color: isBill(s) ? 'var(--chart-5)' : 'var(--chart-2)' };
     }).concat(state.categories.map(function (c, i) {
-      return { name: c.name, value: catCost(c), kind: spentIn(c.id) > c.amount ? 'Catégorie · dépassée' : 'Catégorie', color: CAT_PALETTE[i % CAT_PALETTE.length] };
-    })).filter(function (x) { return x.value > 0; }).sort(function (a, b) { return b.value - a.value; });
+      return { name: c.name, value: catCost(c), kind: spentIn(c.id) > catAvail(c) ? 'Catégorie · dépassée' : 'Catégorie', color: CAT_PALETTE[i % CAT_PALETTE.length] };
+    })).concat([{ name: 'Hors enveloppe', value: t.loose, kind: 'Dépenses notées', color: 'var(--muted)' }])
+      .filter(function (x) { return x.value > 0; }).sort(function (a, b) { return b.value - a.value; });
     var total = items.reduce(function (a, x) { return a + x.value; }, 0);
     var shown = ui.bilanAll ? items : items.slice(0, 8);
     html += '<section class="section a-side"><div class="section-head"><h2 class="heading">Où part ton argent</h2><span class="label">' + euro(total) + '</span></div><div class="group">' +
@@ -1574,8 +1724,12 @@
     html += '<section class="section" style="gap:12px"><h2 class="heading">Apparence</h2>' +
       segmented('theme', [['system', 'Système'], ['light', 'Clair'], ['dark', 'Sombre']], s.theme, 'Thème', false) + '</section>';
 
+    var pp = period();
     html += '<section class="section" style="gap:12px"><h2 class="heading">Accueil</h2><div class="group">' +
-      '<div class="row" style="min-height:64px"><span class="row-main"><span>Abonnements annuels</span><span class="caption">' + (state.settings.annualMode === 'smooth' ? 'Comptés 1/12 chaque mois' : 'Comptés le mois où ils sont prélevés') + '</span></span>' +
+      '<div class="row" style="min-height:64px"><span class="row-main"><span>Jour de paie</span><span class="caption">' +
+      (s.payday === 1 ? 'Ton mois va du 1er au dernier jour' : 'Ton mois va du ' + s.payday + ' au ' + (s.payday === 2 ? '1er' : s.payday - 1) + ' · en ce moment ' + esc(shortDate.format(pp.start) + ' – ' + shortDate.format(pp.end))) + '</span></span>' +
+      stepper('payday', s.payday, '', s.payday === 1 ? 'le 1er' : 'le ' + s.payday) + '</div>' +
+      '<div class="row" style="min-height:64px"><span class="row-main"><span>Paiements annuels et trimestriels</span><span class="caption">' + (state.settings.annualMode === 'smooth' ? 'Lissés sur chaque mois' : 'Comptés le mois où ils sont prélevés') + '</span></span>' +
       segmented('annualMode', [['actual', 'Ce mois-ci'], ['smooth', 'Lissé']], state.settings.annualMode, 'Compter les abonnements annuels', true) + '</div>' +
       '<div class="row" style="min-height:64px"><span class="row-main"><span>Prélèvements affichés</span><span class="caption">Dans « À venir »</span></span>' +
       segmented('homeCount', [[3, '3'], [5, '5']], s.homeCount, 'Nombre de prélèvements affichés', true) + '</div>' +
@@ -1603,9 +1757,13 @@
     html += '<section class="section" style="gap:12px"><h2 class="heading">Données</h2><div class="group">' +
       '<button type="button" class="row" data-action="export">' + icon('download') + '<span class="row-main">Exporter une sauvegarde</span>' + icon('right', 'chev') + '</button>' +
       '<label class="row" style="cursor:pointer">' + icon('upload') + '<span class="row-main">Importer une sauvegarde</span>' + icon('right', 'chev') + '<input type="file" accept="application/json,.json" class="sr-only" data-input="import"></label>' +
+      '<button type="button" class="row" data-action="backups">' + icon('refresh') + '<span class="row-main"><span>Copies automatiques</span><span class="caption">Revenir à une version d\'avant</span></span>' + icon('right', 'chev') + '</button>' +
       '<button type="button" class="row" data-action="ob-again">' + icon('sliders') + '<span class="row-main">Refaire la configuration guidée</span>' + icon('right', 'chev') + '</button>' +
       '<button type="button" class="row" data-action="reload">' + icon('refresh') + '<span class="row-main">Recharger Finy</span>' + icon('right', 'chev') + '</button>' +
-      '</div><p class="caption">Ton budget, ton profil et ton thème restent sur cet appareil. Exporte une sauvegarde pour les retrouver ailleurs.</p></section>';
+      '</div><p class="caption">Ton budget, ton profil et ton thème restent sur cet appareil. ' +
+      (storageState === 'persisted' ? 'Le navigateur les garde même quand il manque de place. '
+        : storageState === 'best-effort' ? 'Le navigateur peut les effacer s\'il manque de place : ajoute Finy à l\'écran d\'accueil. ' : '') +
+      'Exporte une sauvegarde pour les retrouver ailleurs.</p></section>';
     html += '<p class="caption app-version">Finy · V0.' + APP_VERSION + '</p>';
     return html;
   }
@@ -1616,8 +1774,8 @@
     }).join('') + '</div>';
   }
 
-  function stepper(key, value, suffix) {
-    var label = value + (value > 1 ? ' jours' : ' jour') + suffix;
+  function stepper(key, value, suffix, shown) {
+    var label = shown || value + (value > 1 ? ' jours' : ' jour') + suffix;
     return '<div class="stepper"><button type="button" class="icon-btn sm" aria-label="Un jour de moins" data-action="step" data-key="' + key + '" data-value="-1">−</button>' +
       '<output aria-live="polite">' + label + '</output>' +
       '<button type="button" class="icon-btn sm" aria-label="Un jour de plus" data-action="step" data-key="' + key + '" data-value="1">+</button></div>';
@@ -1759,10 +1917,16 @@
   }
 
   function editSalary() {
-    openSheet('Ton salaire', amountField('amount', 'Salaire net par mois (€)', state.salary), 'Enregistrer', function (d) {
-      var n = parseAmount(d.amount);
+    var days = '';
+    for (var d = 1; d <= 28; d++) days += '<option value="' + d + '"' + (d === state.settings.payday ? ' selected' : '') + '>' + (d === 1 ? 'Le 1er (début du mois)' : 'Le ' + d) + '</option>';
+    var body = amountField('amount', 'Salaire net par mois (€)', state.salary) +
+      '<label class="field"><span>Jour de paie</span><select class="input" name="payday">' + days + '</select>' +
+      '<span class="caption">Ton mois Finy commence ce jour-là. Payé le 28 octobre : c\'est ton budget de novembre, jusqu\'au 27 novembre. Payé après le 28, choisis le 28.</span></label>';
+    openSheet('Ton salaire', body, 'Enregistrer', function (data) {
+      var n = parseAmount(data.amount);
       if (n === null) return 'Indique un montant, par exemple 1 070,00.';
       state.salary = n;
+      state.settings.payday = Math.min(28, Math.max(1, parseInt(data.payday, 10) || 1));
     });
   }
 
@@ -1781,7 +1945,10 @@
     if (isNew && s.kind === 'bill' && !(preset && preset.category)) s.category = 'Logement';
     var bill = s.kind === 'bill';
     var word = bill ? 'cette charge' : 'cet abonnement';
-    var yearly = s.frequency === 'year';
+    var yearly = isSpread(s);
+    var freqs = Object.keys(EVERY).map(function (f) {
+      return '<option value="' + f + '"' + (f === s.frequency ? ' selected' : '') + '>' + FREQ_NAME[f] + '</option>';
+    }).join('');
     var months = '';
     for (var mo = 0; mo < 12; mo++) {
       months += '<option value="' + mo + '"' + (mo === s.month ? ' selected' : '') + '>' + cap(new Intl.DateTimeFormat('fr-FR', { month: 'long' }).format(new Date(2026, mo, 1))) + '</option>';
@@ -1797,12 +1964,10 @@
       '<div class="image-pick-actions"><label class="link-btn" style="display:inline-flex;align-items:center;cursor:pointer">Choisir une image<input type="file" accept="image/*" class="sr-only" data-input="sub-image"></label>' +
       '<button type="button" class="link-btn" data-action="sub-image-remove" style="color:var(--muted)"' + (s.image ? '' : ' hidden') + '>Retirer l\'image</button></div></div>' +
       '<label class="field"><span>Nom</span><input class="input" name="name" type="text" maxlength="60" autocomplete="off" placeholder="' + (bill ? 'Loyer, EDF, assurance…' : 'Netflix, Orange…') + '" value="' + esc(s.name) + '" data-input="sub-name"></label>' +
-      '<div class="field"><span>Fréquence</span><div class="segmented" role="radiogroup" aria-label="Fréquence">' +
-      '<label class="seg-opt"><input type="radio" name="frequency" value="month" data-input="sub-freq"' + (yearly ? '' : ' checked') + '><span>Mensuel</span></label>' +
-      '<label class="seg-opt"><input type="radio" name="frequency" value="year" data-input="sub-freq"' + (yearly ? ' checked' : '') + '><span>Annuel</span></label></div></div>' +
-      '<label class="field"><span id="amount-label">' + (yearly ? 'Montant par an (€)' : 'Montant par mois (€)') + '</span><input class="input" name="amount" type="text" inputmode="decimal" autocomplete="off" placeholder="0,00" value="' + (s.amount ? plain(s.amount) : '') + '"></label>' +
+      '<label class="field"><span>Fréquence</span><select class="input" name="frequency" data-input="sub-freq">' + freqs + '</select></label>' +
+      '<label class="field"><span id="amount-label">' + FREQ_AMOUNT[s.frequency] + '</span><input class="input" name="amount" type="text" inputmode="decimal" autocomplete="off" placeholder="0,00" value="' + (s.amount ? plain(s.amount) : '') + '"></label>' +
       '<div class="field-row"><label class="field"><span>Jour du prélèvement</span><select class="input" name="day">' + days + '</select></label>' +
-      '<label class="field" id="month-field"' + (yearly ? '' : ' hidden') + '><span>Mois</span><select class="input" name="month">' + months + '</select></label></div>' +
+      '<label class="field" id="month-field"' + (yearly ? '' : ' hidden') + '><span id="month-label">' + (s.frequency === 'year' ? 'Mois' : 'Un mois de prélèvement') + '</span><select class="input" name="month">' + months + '</select></label></div>' +
       '<label class="field"><span>Catégorie</span><select class="input" name="category" id="sub-category">' + catOptions(s.kind, s.category) + '</select></label>' +
       '<label class="field"><span>Site du service (facultatif)</span><input class="input" name="site" type="text" inputmode="url" autocapitalize="off" autocorrect="off" spellcheck="false" autocomplete="off" placeholder="netflix.com" value="' + esc(s.site || '') + '" data-input="sub-site">' +
       '<span class="caption">Pour afficher son logo automatiquement. Seul le nom du site est envoyé à DuckDuckGo pour récupérer l\'icône.</span></label>' +
@@ -1824,12 +1989,12 @@
         site = normalizeSite(data.site);
         if (!site) return 'Indique un site comme netflix.com, ou laisse le champ vide.';
       }
-      var freq = data.frequency === 'year' ? 'year' : 'month';
+      var freq = Object.prototype.hasOwnProperty.call(EVERY, data.frequency) ? data.frequency : 'month';
       var item = {
         id: isNew ? uid() : id, name: name, amount: amount,
         day: parseInt(data.day, 10) || 1,
         frequency: freq,
-        month: freq === 'year' ? Math.min(11, Math.max(0, parseInt(data.month, 10) || 0)) : (s.month || 0),
+        month: freq !== 'month' ? Math.min(11, Math.max(0, parseInt(data.month, 10) || 0)) : (s.month || 0),
         category: data.category || 'Autre', site: site, image: sheetDraft.image,
         trialEnd: kind === 'sub' && isIsoDate(data.trialEnd) ? data.trialEnd : '',
         paused: data.paused === 'yes',
@@ -1846,21 +2011,20 @@
   function editCat(id) {
     var c = state.categories.filter(function (x) { return x.id === id; })[0];
     var isNew = !c;
-    c = c || { name: '', amount: 0 };
+    c = c || { name: '', amount: 0, carry: false, carryFrom: null };
+    var carry = isNew ? 0 : carryIn(c);
     var body = '<p class="caption">Une catégorie réserve une part de ton salaire pour une dépense régulière : alimentation, soins, essence…</p>' +
       '<label class="field"><span>Nom</span><input class="input" name="name" type="text" maxlength="40" autocomplete="off" placeholder="Alimentation" value="' + esc(c.name) + '"></label>' +
-      amountField('amount', 'Budget par mois (€)', c.amount);
+      amountField('amount', 'Budget par mois (€)', c.amount) +
+      '<div class="field"><span>Ce qui n\'est pas dépensé</span><div class="segmented" role="radiogroup" aria-label="Ce qui n\'est pas dépensé">' +
+      '<label class="seg-opt"><input type="radio" name="carry" value="no"' + (c.carry ? '' : ' checked') + '><span>Repart de zéro</span></label>' +
+      '<label class="seg-opt"><input type="radio" name="carry" value="yes"' + (c.carry ? ' checked' : '') + '><span>Reste dans l\'enveloppe</span></label></div>' +
+      '<span class="caption">' + (c.carry && carry > 0 ? 'Ce mois-ci, ' + euro(carry) + ' reportés des mois d\'avant s\'ajoutent au budget. '
+        : 'Pratique pour les dépenses irrégulières (cadeaux, vêtements) : le reste du mois s\'ajoute au mois suivant. ') +
+      'Un dépassement ne se reporte pas.</span></div>';
     if (!isNew) {
       // Les dépenses du mois dans cette catégorie, les plus récentes d'abord.
-      var k = monthKey(today());
-      var list = state.expenses.filter(function (x) { return x.cat === id && x.date.slice(0, 7) === k; })
-        .sort(function (a, b) { return a.date < b.date ? 1 : -1; });
-      body += '<div class="field"><span>Dépensé en ' + new Intl.DateTimeFormat('fr-FR', { month: 'long' }).format(today()) + ' : ' + euro(spentIn(id)) + '</span><div class="group">' +
-        list.map(function (x) {
-          return '<div class="row"><span class="row-main"><span class="row-title">' + (x.note ? esc(x.note) : 'Dépense') + '</span><span class="row-meta"><span>' + shortDate.format(parseIso(x.date)) + '</span></span></span>' +
-            '<span class="row-amount">' + euro(x.amount) + '</span><button type="button" class="icon-btn sm" aria-label="Supprimer cette dépense" data-action="delete-exp" data-id="' + esc(x.id) + '" data-cat="' + esc(id) + '">' + icon('close') + '</button></div>';
-        }).join('') +
-        '<button type="button" class="row row-link" data-action="add-exp-in" data-id="' + esc(id) + '">' + icon('plus') + 'Ajouter une dépense</button></div></div>';
+      body += expenseList(id, 'Dépensé en ' + periodMonth() + ' : ' + euro(spentIn(id)) + (carry > 0 ? ' sur ' + euro(catAvail(c)) : ''));
     }
     var del = isNew ? '' : '<button type="button" class="btn btn-danger btn-block" data-action="delete-cat" data-id="' + esc(id) + '">Supprimer cette catégorie</button>';
     openSheet(isNew ? 'Nouvelle catégorie' : 'Modifier la catégorie', body, isNew ? 'Ajouter' : 'Enregistrer', function (data) {
@@ -1868,10 +2032,32 @@
       var amount = parseAmount(data.amount);
       if (!name) return 'Donne un nom à cette catégorie.';
       if (amount === null) return 'Indique un montant, par exemple 150,00.';
-      var item = { id: isNew ? uid() : id, name: name, amount: amount };
+      var on = data.carry === 'yes';
+      // Le report compte à partir du mois où il est activé : rien n'est reporté des mois d'avant.
+      var item = { id: isNew ? uid() : id, name: name, amount: amount, carry: on, carryFrom: on ? (c.carry && c.carryFrom ? c.carryFrom : curKey()) : null };
       if (isNew) state.categories.push(item);
       else state.categories = state.categories.map(function (x) { return x.id === id ? item : x; });
     }, del);
+  }
+
+  // Les dépenses du mois en cours d'une enveloppe ('' : hors enveloppe), avec suppression et ajout.
+  function expenseList(catId, title) {
+    var p = period();
+    var list = state.expenses.filter(function (x) { return x.cat === catId && inPeriod(x.date, p); })
+      .sort(function (a, b) { return a.date < b.date ? 1 : -1; });
+    return '<div class="field"><span>' + title + '</span><div class="group">' +
+      list.map(function (x) {
+        return '<div class="row"><span class="row-main"><span class="row-title">' + (x.note ? esc(x.note) : 'Dépense') + '</span><span class="row-meta"><span>' + shortDate.format(parseIso(x.date)) + (x.ref ? ' · importée' : '') + '</span></span></span>' +
+          '<span class="row-amount">' + euro(x.amount) + '</span><button type="button" class="icon-btn sm" aria-label="Supprimer cette dépense" data-action="delete-exp" data-id="' + esc(x.id) + '" data-cat="' + esc(catId) + '">' + icon('close') + '</button></div>';
+      }).join('') +
+      '<button type="button" class="row row-link" data-action="add-exp-in" data-id="' + esc(catId) + '">' + icon('plus') + 'Ajouter une dépense</button></div></div>';
+  }
+
+  // Dépenses hors enveloppe du mois : un resto, un cadeau… retirés directement de ce qui est libre.
+  function editLoose() {
+    var body = '<p class="caption">Ce qui ne rentre dans aucune enveloppe. C\'est retiré directement de ce qu\'il te reste, et ton budget par jour baisse d\'autant.</p>' +
+      expenseList('', 'Dépensé en ' + periodMonth() + ' : ' + euro(looseSpent()));
+    openSheet('Hors enveloppe', body, 'Fermer', null);
   }
 
   // ---------- Simulation « Et si… » ----------
@@ -1909,7 +2095,7 @@
     var now = totals();
     var sim = totals({ salary: w.salary, savings: w.savings, subs: w.kept });
     var diff = sim.free - now.free;
-    var perYear = w.dropped.reduce(function (a, s) { return a + (s.frequency === 'year' ? s.amount : s.amount * 12); }, 0);
+    var perYear = w.dropped.reduce(function (a, s) { return a + s.amount * 12 / (EVERY[s.frequency] || 1); }, 0);
     out.innerHTML = '<span class="muted">Il te resterait</span><span class="strong"' + (sim.free < 0 ? ' style="color:var(--danger)"' : '') + '>' + euro(sim.free) + '</span>' +
       (Math.abs(diff) >= 0.01 ? '<span class="' + (diff > 0 ? 'ok' : 'soon') + '">' + (diff > 0 ? '+ ' : '− ') + euro(Math.abs(diff)) + ' par mois</span>' : '<span class="muted">comme aujourd\'hui</span>');
     // Si l'argent gagné va aux objectifs : combien de mois en moins.
@@ -1930,6 +2116,7 @@
     var w = readWhatIf();
     var msg = 'Appliquer ces changements ?' + (w.dropped.length ? '\nLes abonnements décochés seront mis en pause (pas supprimés).' : '');
     if (!window.confirm(msg)) return;
+    takeBackup('whatif');
     state.salary = w.salary;
     state.savings = w.savings;
     w.dropped.forEach(function (s) { s.paused = true; });
@@ -1970,7 +2157,7 @@
       // Fin d'un essai gratuit : le moment de résilier si on ne veut pas le garder.
       if (!s.trialEnd) return;
       var end = parseIso(s.trialEnd);
-      var then = '. Ensuite : ' + euro(s.amount) + (s.frequency === 'year' ? ' par an' : ' par mois') + '. Pense à résilier si tu ne le gardes pas.';
+      var then = '. Ensuite : ' + euro(s.amount) + (FREQ_THEN[s.frequency] || ' par mois') + '. Pense à résilier si tu ne le gardes pas.';
       add(shift(end, -r.daysBefore), s.id + ':' + s.trialEnd + ':trial-before', 'Fin de l\'essai ' + s.name, 'Ton essai gratuit se termine ' + inDays + then);
       if (r.sameDay) add(end, s.id + ':' + s.trialEnd + ':trial-day', 'Fin de l\'essai ' + s.name, 'Ton essai gratuit se termine aujourd\'hui' + then);
     });
@@ -2201,15 +2388,100 @@
       try { data = JSON.parse(reader.result); } catch (e) { return toast("Ce fichier n'est pas une sauvegarde Finy"); }
       if (!data || typeof data !== 'object' || (!('salary' in data) && !('subs' in data))) return toast("Ce fichier n'est pas une sauvegarde Finy");
       if (!window.confirm('Remplacer tes données actuelles par cette sauvegarde ?')) return;
-      state = merge(defaults(), data);
-      // Une sauvegarde importée (y compris depuis le premier écran) vaut configuration : pas de parcours guidé.
-      state.meta.onboarded = state.meta.onboarded || iso(today());
-      state.onboarding = null;
-      obClose();
-      save(); applyTheme(); render();
-      toast('Sauvegarde importée');
+      // Les données remplacées restent dans les copies automatiques, au cas où.
+      takeBackup('import').then(function () {
+        state = merge(defaults(), data);
+        // Une sauvegarde importée (y compris depuis le premier écran) vaut configuration : pas de parcours guidé.
+        state.meta.onboarded = state.meta.onboarded || iso(today());
+        state.onboarding = null;
+        obClose();
+        save(); applyTheme(); render();
+        toast('Sauvegarde importée');
+      });
     };
     reader.readAsText(file);
+  }
+
+  // ---------- Stockage protégé et copies automatiques ----------
+
+  // Demande au navigateur de ne pas effacer les données quand il manque de place (stockage « persistant »).
+  // 'persisted' : accordé ; 'best-effort' : refusé (le navigateur peut effacer) ; null : on ne sait pas.
+  var storageState = null;
+  function protectStorage() {
+    if (TEST || !navigator.storage || !navigator.storage.persist) return;
+    navigator.storage.persisted().then(function (ok) {
+      if (ok) return true;
+      // Demandé seulement quand il y a quelque chose à protéger.
+      if (!(state.salary > 0 || state.subs.length || state.categories.length)) return null;
+      return navigator.storage.persist();
+    }).then(function (ok) {
+      var next = ok === null ? null : ok ? 'persisted' : 'best-effort';
+      if (next === storageState) return;
+      storageState = next;
+      if (currentRoute() === 'reglages') render();
+    }).catch(function () {});
+  }
+
+  // Copies gardées dans IndexedDB sur cet appareil : une par jour d'utilisation (à la première ouverture,
+  // si quelque chose a changé depuis la dernière copie), et une juste avant ce qui remplace beaucoup de
+  // données (import, restauration, configuration, « Et si… »).
+  // Elles protègent d'une erreur, pas d'un Safari vidé : l'export reste la vraie sauvegarde.
+  var BACKUP_WHY = { auto: 'Copie du jour', import: 'Avant l\'import d\'une sauvegarde', restore: 'Avant une restauration', guide: 'Avant la configuration guidée', whatif: 'Avant « Et si… »' };
+
+  function backupList() {
+    return kv('readonly', function (st) { return st.get('backups'); }).then(function (l) { return Array.isArray(l) ? l : []; }, function () { return []; });
+  }
+
+  function takeBackup(why) {
+    if (TEST || !(state.salary > 0 || state.subs.length || state.categories.length || state.goals.length)) return Promise.resolve();
+    var copy = JSON.parse(JSON.stringify(state));
+    delete copy.notified;
+    var data = JSON.stringify(copy);
+    return backupList().then(function (list) {
+      var last = list[0];
+      if (last && last.data === data) return;
+      // La copie du jour est celle de la première ouverture : une erreur faite ensuite ne l'écrase pas.
+      if (why === 'auto' && list.some(function (b) { return b.why === 'auto' && iso(new Date(b.at)) === iso(today()); })) return;
+      list.unshift({ at: new Date().toISOString(), why: why, data: data });
+      return kv('readwrite', function (st) { return st.put(list.slice(0, BACKUP_KEEP), 'backups'); });
+    }).catch(function () {});
+  }
+
+  function showBackups() {
+    backupList().then(function (list) {
+      var when = new Intl.DateTimeFormat('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' });
+      var rows = list.map(function (b) {
+        var d = {};
+        try { d = JSON.parse(b.data); } catch (e) { return ''; }
+        var subs = Array.isArray(d.subs) ? d.subs.length : 0, cats = Array.isArray(d.categories) ? d.categories.length : 0;
+        var sum = [typeof d.salary === 'number' && d.salary > 0 ? 'salaire ' + euro(d.salary) : '', subs + (subs > 1 ? ' prélèvements' : ' prélèvement'), cats + (cats > 1 ? ' enveloppes' : ' enveloppe')].filter(Boolean).join(' · ');
+        return '<button type="button" class="row tall" data-action="restore-backup" data-value="' + esc(b.at) + '"><span class="row-main"><span class="row-title">' + esc(cap(when.format(new Date(b.at)))) + '</span>' +
+          '<span class="row-meta"><span>' + esc((BACKUP_WHY[b.why] || 'Copie') + ' · ' + sum) + '</span></span></span>' + icon('right', 'chev') + '</button>';
+      }).join('');
+      openSheet('Copies automatiques', '<p class="caption">Finy garde ici les ' + BACKUP_KEEP + ' dernières versions de tes données : une par jour d\'utilisation, et une avant chaque import ou restauration. Touche une copie pour y revenir.</p>' +
+        '<div class="group">' + (rows || '<div class="empty"><span>Aucune copie pour l\'instant.</span><span class="caption">La première sera faite à la prochaine ouverture de Finy.</span></div>') + '</div>' +
+        '<p class="caption">Ces copies restent sur cet appareil et disparaissent si Safari est vidé : exporte aussi une sauvegarde de temps en temps.</p>', 'Fermer', null);
+    });
+  }
+
+  function restoreBackup(at) {
+    backupList().then(function (list) {
+      var b = list.filter(function (x) { return x.at === at; })[0];
+      if (!b) return toast('Cette copie n\'existe plus');
+      var data;
+      try { data = JSON.parse(b.data); } catch (e) { return toast('Cette copie est illisible'); }
+      if (!window.confirm('Revenir à la copie du ' + new Intl.DateTimeFormat('fr-FR', { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' }).format(new Date(at)) + ' ?\nTes données actuelles seront gardées dans une nouvelle copie.')) return;
+      takeBackup('restore').then(function () {
+        var notified = state.notified;
+        state = merge(defaults(), data);
+        state.notified = notified;
+        state.meta.onboarded = state.meta.onboarded || iso(today());
+        state.onboarding = null;
+        obClose(); closeSheet();
+        save(); applyTheme(); render();
+        toast('Données restaurées');
+      });
+    });
   }
 
   // Recadre au carré et redessine l'image : le fichier d'origine (et ses métadonnées) n'est jamais gardé.
@@ -2422,6 +2694,8 @@
       var gaps = items.slice(1).map(function (it, i) { return diffDays(it.date, items[i].date); });
       var freq = null;
       if (gaps.every(function (d) { return d >= 350 && d <= 380; })) freq = 'year';
+      else if (gaps.every(function (d) { return d >= 172 && d <= 192; })) freq = 'half';
+      else if (gaps.every(function (d) { return d >= 84 && d <= 98; })) freq = 'quarter';
       else if (gaps.some(function (d) { return d <= 35; }) && gaps.every(function (d) {
         var k = Math.round(d / 30.44);
         return k >= 1 && k <= 3 && Math.abs(d - k * 30.44) <= 5;
@@ -2448,7 +2722,8 @@
     })[0] || null;
   }
 
-  function importStatement(text) {
+  // `mode` 'expenses' : on en tire les dépenses du mois ; sinon les abonnements.
+  function importStatement(text, mode) {
     var rows = parseCsv(text);
     var tx = [], cols = null;
     rows.forEach(function (r, i) {
@@ -2457,12 +2732,114 @@
       var t = cols && readRow(r, cols);
       if (t) tx.push(t);
     });
-    if (!tx.length) return askColumns(rows);
-    showFound(findRecurring(tx));
+    if (!tx.length) return askColumns(rows, mode);
+    useStatement(tx, mode);
+  }
+
+  function useStatement(tx, mode) {
+    if (mode === 'expenses') showExpenses(tx);
+    else showFound(findRecurring(tx));
+  }
+
+  // ---------- Import : dépenses d'un relevé ----------
+
+  // Enseignes courantes → mots cherchés dans le nom des enveloppes. Utilisé tant qu'aucune règle n'est apprise.
+  var SHOP_HINTS = [
+    [/carrefour|leclerc|auchan|lidl|aldi|intermarche|monoprix|franprix|casino|super ?u\b|hyper ?u\b|systeme u|picard|biocoop|naturalia|grand frais|netto|match|cora|spar|primeur|boulangerie|boucherie/, /alim|course|nourri|super/],
+    [/total ?energies|esso|shell|\bbp\b|avia|agip|station|carbu|dyneff/, /essence|carbu|voiture|plein/],
+    [/restaurant|resto|mcdo|mc donald|burger|kfc|quick|subway|uber ?eats|deliveroo|just ?eat|starbucks|brasserie|pizza|sushi|kebab|\bbar\b|cafe/, /sortie|resto|loisir/],
+    [/pharmacie|docteur|medecin|dentiste|opticien|laboratoire/, /sante|soin|pharma/],
+    [/zara|h ?& ?m|primark|kiabi|uniqlo|decathlon|fnac|darty|boulanger|ikea|action|amazon|cdiscount|zalando|vinted|shein/, /shop|achat|vetement|maison/],
+    [/zooplus|animalis|truffaut|veterinaire|maxi ?zoo/, /anima|chat|chien/],
+    [/sncf|ouigo|blablacar|uber\b|bolt|heetch|ratp|tcl|parking|peage/, /transport|deplac|voyage/]
+  ];
+
+  // Libellé d'enseigne pour retenir une règle : « CB CARREFOUR MARKET 12/10 » → « carrefour market ».
+  function shopKey(label) {
+    return cleanLabel(label).split(' ').filter(function (w) { return w.length > 1; }).slice(0, 2).join(' ').slice(0, 40);
+  }
+
+  // Enveloppe proposée pour une ligne : règle apprise, sinon enseigne connue, sinon hors enveloppe.
+  function guessCat(label) {
+    var key = shopKey(label);
+    if (key && Object.prototype.hasOwnProperty.call(state.rules, key)) {
+      var r = state.rules[key];
+      if (r === '' || state.categories.some(function (c) { return c.id === r; })) return r;
+    }
+    var t = fold(label);
+    for (var i = 0; i < SHOP_HINTS.length; i++) {
+      if (!SHOP_HINTS[i][0].test(t)) continue;
+      var c = state.categories.filter(function (x) { return SHOP_HINTS[i][1].test(fold(x.name)); })[0];
+      if (c) return c.id;
+    }
+    return '';
+  }
+
+  // Les dépenses du mois en cours trouvées dans le relevé, à ranger par enveloppe avant de les ajouter.
+  // Écartés : rentrées d'argent, virements et retraits, abonnements et charges déjà suivis dans Finy,
+  // et les lignes déjà importées (même date, même montant, même libellé).
+  function showExpenses(tx) {
+    var p = period();
+    var a = iso(p.start), b = iso(p.end);
+    var known = {};
+    state.expenses.forEach(function (x) { if (x.ref) known[x.ref] = true; });
+    var skipped = { subs: 0, dup: 0 };
+    var rows = tx.filter(function (t) { return t.amount < 0 && !NOT_A_SUB.test(fold(t.label).trim()); }).map(function (t) {
+      var d = iso(t.date);
+      return { date: d, label: t.label.replace(/\s+/g, ' ').trim(), amount: Math.round(-t.amount * 100) / 100, ref: d + '|' + Math.round(-t.amount * 100) + '|' + fold(t.label).replace(/\s+/g, ' ').trim().slice(0, 80) };
+    }).filter(function (r) {
+      if (r.date < a || r.date > b) return false;
+      if (known[r.ref]) { skipped.dup++; return false; }
+      var svc = knownService(r.label);
+      var sub = existingSub({ name: svc ? svc.name : cleanLabel(r.label).split(' ').slice(0, 3).join(' ') });
+      if (sub && Math.abs(sub.amount - r.amount) <= Math.max(1, sub.amount * 0.1)) { skipped.subs++; return false; }
+      return true;
+    }).sort(function (x, y) { return x.date < y.date ? 1 : -1; }).slice(0, 150);
+
+    var notes = [];
+    if (skipped.subs) notes.push(skipped.subs + ' prélèvement' + (skipped.subs > 1 ? 's' : '') + ' déjà compté' + (skipped.subs > 1 ? 's' : '') + ' dans tes abonnements');
+    if (skipped.dup) notes.push(skipped.dup + ' déjà importée' + (skipped.dup > 1 ? 's' : ''));
+    if (!rows.length) {
+      openSheet('Aucune dépense à importer', '<p class="muted">Finy n\'a pas trouvé de nouvelle dépense entre le ' + esc(shortDate.format(p.start)) + ' et le ' + esc(shortDate.format(p.end)) + ' dans ce relevé.</p>' +
+        (notes.length ? '<p class="caption">Écartées : ' + esc(notes.join(', ')) + '.</p>' : '<p class="caption">Seules les dépenses du mois en cours sont importées. Vérifie que le relevé couvre bien ces dates.</p>'), 'Fermer', null);
+      return;
+    }
+    var options = function (sel) {
+      return state.categories.map(function (c) { return '<option value="' + esc(c.id) + '"' + (c.id === sel ? ' selected' : '') + '>' + esc(c.name) + '</option>'; }).join('') +
+        '<option value=""' + (sel === '' ? ' selected' : '') + '>Hors enveloppe</option>';
+    };
+    var total = rows.reduce(function (s, r) { return s + r.amount; }, 0);
+    var body = '<p class="caption">' + rows.length + ' dépense' + (rows.length > 1 ? 's' : '') + ' de ' + esc(periodMonth()) + ', ' + euro(total) + ' au total. Choisis l\'enveloppe de chacune, décoche ce qui n\'en est pas une. Finy retient tes choix pour la prochaine fois.' +
+      (notes.length ? ' Écartées : ' + esc(notes.join(', ')) + '.' : '') + '</p><div class="group imp-list">' +
+      rows.map(function (r, i) {
+        var name = cap(cleanLabel(r.label) || r.label.toLowerCase()).slice(0, 60);
+        r.name = name;
+        return '<div class="row tall imp-row"><input type="checkbox" name="take-' + i + '" checked aria-label="Importer ' + esc(name) + '">' +
+          '<span class="row-main"><span class="row-title">' + esc(name) + '</span><span class="row-meta"><span>' + esc(shortDate.format(parseIso(r.date))) + '</span></span>' +
+          '<select class="input imp-cat" name="cat-' + i + '" aria-label="Enveloppe de ' + esc(name) + '">' + options(guessCat(r.label)) + '</select></span>' +
+          '<span class="row-amount">' + euro(r.amount) + '</span></div>';
+      }).join('') + '</div>';
+    openSheet('Dépenses du relevé', body, 'Ajouter la sélection', function (data) {
+      var n = 0, sum = 0;
+      rows.forEach(function (r, i) {
+        if (!data['take-' + i]) return;
+        var cat = data['cat-' + i] || '';
+        if (cat && !state.categories.some(function (c) { return c.id === cat; })) cat = '';
+        state.expenses.push({ id: uid(), cat: cat, amount: r.amount, date: r.date, note: r.name, ref: r.ref });
+        var key = shopKey(r.label);
+        if (key) state.rules[key] = cat;
+        n++; sum += r.amount;
+      });
+      if (!n) return 'Coche au moins une dépense.';
+      // Les règles les plus anciennes partent au-delà de 400.
+      var keys = Object.keys(state.rules);
+      if (keys.length > 400) keys.slice(0, keys.length - 400).forEach(function (k) { delete state.rules[k]; });
+      toast(n + ' dépense' + (n > 1 ? 's ajoutées' : ' ajoutée') + ' · ' + euro(sum));
+    });
   }
 
   // Relevé dans un format inconnu : on demande quelle colonne contient quoi.
-  function askColumns(rows) {
+  function askColumns(rows, mode) {
     var start = -1;
     rows.some(function (r, i) { if (r.some(function (c) { return parseDate(c); })) { start = i; return true; } return false; });
     if (start < 0) return toast("Ce fichier ne ressemble pas à un relevé bancaire");
@@ -2486,7 +2863,7 @@
       var cols = { date: +d.date, label: +d.label, amount: +d.amount };
       var tx = rows.slice(start).map(function (r) { return readRow(r, cols); }).filter(Boolean);
       // La feuille se ferme juste après : on ouvre la suivante une fois fermée.
-      setTimeout(function () { showFound(findRecurring(tx)); }, 0);
+      setTimeout(function () { useStatement(tx, mode); }, 0);
     });
   }
 
@@ -2513,7 +2890,7 @@
             (up ? 'Hausse' : 'Baisse') + ', avant ' + euro(c.have.amount) + '</span></span></span>' +
             '<span class="row-amount">' + priceLabel(c) + '</span><input type="checkbox" name="upd-' + i + '" checked aria-label="Mettre à jour le prix de ' + esc(c.have.name) + '"></label>';
         }
-        var meta = (c.have ? 'Déjà dans Finy · ' : '') + (c.frequency === 'year' ? 'Annuel' : 'Mensuel') + ' · le ' + c.day + ' · vu ' + c.count + ' fois';
+        var meta = (c.have ? 'Déjà dans Finy · ' : '') + FREQ_NAME[c.frequency] + ' · le ' + c.day + ' · vu ' + c.count + ' fois';
         return '<label class="row tall pick">' + subTile(c) +
           '<span class="row-main"><span class="row-title">' + esc(c.name) + '</span><span class="row-meta"><span>' + meta + '</span></span></span>' +
           '<span class="row-amount">' + priceLabel(c) + '</span><input type="checkbox" name="pick-' + i + '"' + (c.have ? '' : ' checked') + ' aria-label="Ajouter ' + esc(c.name) + '"></label>';
@@ -2614,17 +2991,20 @@
       if (best === null || n > best) best = n;
     }
     if (bestKey !== null || best !== null) out.amount = bestKey !== null ? bestKey : best;
-    out.frequency = /annuel|par an\b|\/ ?an\b|12 mois|yearly|annual|per year|\/ ?year/.test(f) ? 'year' : 'month';
+    out.frequency = /annuel|par an\b|\/ ?an\b|12 mois|yearly|annual|per year|\/ ?year/.test(f) ? 'year'
+      : /semestri|6 mois|half.?year|semi.?annual/.test(f) ? 'half'
+      : /trimestri|3 mois|quarterly|per quarter/.test(f) ? 'quarter' : 'month';
     var dates = (f.match(DATE_RE) || []).map(parseDate).filter(Boolean);
     if (dates.length) { out.day = dates[0].getDate(); out.month = dates[0].getMonth(); }
     return out;
   }
 
-  function importPdf(buf) {
+  function importPdf(buf, mode) {
     toast('Lecture du PDF…');
     pdfText(buf).then(function (text) {
       if (text.replace(/\s/g, '').length < 20) return toast('Ce PDF est une image scannée : Finy ne peut pas le lire');
       var lines = statementLines(text);
+      if (mode === 'expenses') return lines.length ? showExpenses(lines) : toast('Ce PDF ne ressemble pas à un relevé bancaire');
       var found = lines.length >= 8 ? null : readInvoice(text);
       if (found && !found.name && !found.amount) return toast("Finy n'a rien trouvé dans ce PDF");
       if (!found) return showFound(findRecurring(lines));
@@ -2633,14 +3013,14 @@
     }, function () { toast('Impossible de lire ce PDF'); });
   }
 
-  function importFile(file) {
+  function importFile(file, mode) {
     var isPdf = /pdf$/i.test(file.type) || /\.pdf$/i.test(file.name);
     // Le fichier a pu être choisi depuis la feuille « Nouvel abonnement » : on la ferme avant d'en ouvrir une autre.
     closeSheet();
     var reader = new FileReader();
     reader.onload = function () {
-      if (isPdf) importPdf(reader.result);
-      else importStatement(decodeText(reader.result));
+      if (isPdf) importPdf(reader.result, mode);
+      else importStatement(decodeText(reader.result), mode);
     };
     reader.onerror = function () { toast('Impossible de lire ce fichier'); };
     reader.readAsArrayBuffer(file);
@@ -2699,7 +3079,7 @@
         state.meta.firstSteps = null;
         save();
         return render();
-      case 'ob-again': return obOpen(true);
+      case 'ob-again': takeBackup('guide'); return obOpen(true);
       case 'edit-goal': return editGoal(id);
       case 'delete-goal':
         if (!window.confirm('Supprimer cet objectif ?')) return;
@@ -2729,11 +3109,15 @@
         return qeUpdate();
       case 'qe-close': return qeClose();
       case 'qe-submit': return qeSubmit();
-      case 'add-exp-in': return editExpense(id);
+      case 'add-exp-in': closeSheet(); return editExpense(id || '');
+      case 'edit-loose': return editLoose();
+      case 'qe-amount': return qeAmount(parseFloat(v));
+      case 'backups': return showBackups();
+      case 'restore-backup': return restoreBackup(v);
       case 'delete-exp':
         state.expenses = state.expenses.filter(function (x) { return x.id !== id; });
         save(); render(); toast('Dépense supprimée');
-        return editCat(el.dataset.cat);
+        return el.dataset.cat ? editCat(el.dataset.cat) : editLoose();
       case 'add-income': return addIncome();
       case 'edit-income': return editIncome(id);
       case 'delete-income':
@@ -2773,8 +3157,8 @@
         save(); return render();
       case 'step':
         var key = el.dataset.key;
-        var target = key === 'alertDays' ? state.settings : state.settings.reminders;
-        target[key] = Math.min(30, Math.max(1, target[key] + parseInt(v, 10)));
+        var target = key === 'alertDays' || key === 'payday' ? state.settings : state.settings.reminders;
+        target[key] = Math.min(key === 'payday' ? 28 : 30, Math.max(1, target[key] + parseInt(v, 10)));
         save(); return render();
       case 'toggle-reminders': return toggleReminders();
       case 'toggle-background': return toggleBackground();
@@ -2837,9 +3221,10 @@
       document.getElementById('trial-field').hidden = b;
     }
     if (el.dataset.input === 'sub-freq') {
-      var year = el.value === 'year';
-      document.getElementById('amount-label').textContent = year ? 'Montant par an (€)' : 'Montant par mois (€)';
-      document.getElementById('month-field').hidden = !year;
+      var fq = Object.prototype.hasOwnProperty.call(EVERY, el.value) ? el.value : 'month';
+      document.getElementById('amount-label').textContent = FREQ_AMOUNT[fq];
+      document.getElementById('month-field').hidden = fq === 'month';
+      document.getElementById('month-label').textContent = fq === 'year' ? 'Mois' : 'Un mois de prélèvement';
     }
     if (el.dataset.input === 'photo' && el.files && el.files[0]) setPhoto(el.files[0]);
     if (el.dataset.input === 'sub-image' && el.files && el.files[0]) {
@@ -2848,6 +3233,7 @@
     }
     if (el.dataset.input === 'import' && el.files && el.files[0]) { importData(el.files[0]); el.value = ''; }
     if (el.dataset.input === 'statement' && el.files && el.files[0]) { importFile(el.files[0]); el.value = ''; }
+    if (el.dataset.input === 'statement-exp' && el.files && el.files[0]) { importFile(el.files[0], 'expenses'); el.value = ''; }
   });
 
   window.addEventListener('hashchange', render);
@@ -3153,7 +3539,7 @@
             x.open = g.months === 0;
             x.months = g.months || 12;
             x.monthly = 0;
-            x.start = monthKey(today());
+            x.start = curKey();
           });
         });
         break;
@@ -3716,6 +4102,31 @@
   render();
   if (!state.meta.onboarded) obOpen(false);
   checkReminders();
+  protectStorage();
+  takeBackup('auto');
+
+  // Raccourcis de l'icône (appui long sur Android, menu de l'app installée sur ordinateur) : ?action=depense…
+  var startAction = new URLSearchParams(location.search).get('action');
+  if (startAction && state.meta.onboarded) {
+    if (window.history && history.replaceState) history.replaceState(null, '', location.pathname + location.hash);
+    if (startAction === 'depense') editExpense();
+    else if (startAction === 'revenu') addIncome();
+    else if (startAction === 'abonnement') editSub(null);
+  }
+
+  if (TEST) {
+    TEST.api = {
+      state: function () { return state; },
+      reset: function (data) { state = merge(defaults(), data || {}); },
+      merge: merge, defaults: defaults, today: today,
+      periodOf: periodOf, period: period, curKey: curKey, periodFor: periodFor, shiftKey: shiftKey,
+      nextDate: nextDate, chargeIn: chargeIn, costThisMonth: costThisMonth, yearTotal: yearTotal,
+      goalPlan: goalPlan, totals: totals, forecast: forecast, spentIn: spentIn, carryIn: carryIn, catCost: catCost,
+      findRecurring: findRecurring, parseCsv: parseCsv, parseDate: parseDate, parseMoney: parseMoney,
+      cleanLabel: cleanLabel, knownService: knownService, guessCat: guessCat, shopKey: shopKey,
+      frequentAmounts: frequentAmounts, readInvoice: readInvoice
+    };
+  }
 
   // Écran de chargement : reste au moins ~0,9 s, la barre se termine, puis fondu vers l'app.
   var splash = document.getElementById('splash');
@@ -3732,7 +4143,7 @@
     }, splashLeft);
   }
 
-  if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+  if ('serviceWorker' in navigator && location.protocol !== 'file:' && !TEST) {
     window.addEventListener('load', function () {
       navigator.serviceWorker.register('sw.js').catch(function () {});
     });
